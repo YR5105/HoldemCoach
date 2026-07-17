@@ -2,22 +2,36 @@ import { shuffledDeck } from './deck';
 import { nextToActFrom } from './seatOrder';
 import type { ActionLogEntry, GameConfig, GameState, Seat } from './types';
 
-function createSeat(seatIndex: number, startingStack: number): Seat {
+function createSeat(seatIndex: number, stack: number): Seat {
+  const sittingOut = stack <= 0;
   return {
     seatIndex,
-    stack: startingStack,
+    stack: Math.max(0, stack),
     holeCards: null,
-    folded: false,
+    // A seat with no chips is out of the hand entirely — sitting out AND
+    // folded, so the "one player left" and showdown logic ignore it.
+    folded: sittingOut,
     allIn: false,
     committedThisStreet: 0,
     committedTotal: 0,
     hasActed: false,
     raiseCapped: false,
-    sittingOut: false,
+    sittingOut,
   };
 }
 
-export function createInitialState(config: GameConfig, seed: string, buttonSeat = 0): GameState {
+/**
+ * Creates a fresh WAITING state. `seatStacks` (optional) sets each seat's
+ * starting chips — used to carry stacks between hands in a continuous match;
+ * seats with 0 chips are eliminated (sitting out). Omit it for a fresh table
+ * where everyone gets `config.startingStack`.
+ */
+export function createInitialState(
+  config: GameConfig,
+  seed: string,
+  buttonSeat = 0,
+  seatStacks?: number[],
+): GameState {
   if (config.players < 2 || config.players > 9) {
     throw new Error('players must be between 2 and 9');
   }
@@ -25,7 +39,9 @@ export function createInitialState(config: GameConfig, seed: string, buttonSeat 
     seed,
     config,
     street: 'WAITING',
-    seats: Array.from({ length: config.players }, (_, i) => createSeat(i, config.startingStack)),
+    seats: Array.from({ length: config.players }, (_, i) =>
+      createSeat(i, seatStacks ? (seatStacks[i] ?? 0) : config.startingStack),
+    ),
     board: [],
     deck: shuffledDeck(seed),
     currentBet: 0,
@@ -59,9 +75,33 @@ function postBlind(state: GameState, seatIndex: number, amount: number, kind: 'p
   logAction(state, { seat: seatIndex, street: state.street, action: kind, amount: posted });
 }
 
+/** Seat indices with chips and not eliminated, in seat order. */
+function activeSeatIndices(state: GameState): number[] {
+  return state.seats.filter((s) => !s.sittingOut && s.stack > 0).map((s) => s.seatIndex);
+}
+
+/** How many players are still in the match (have chips). */
+export function activePlayers(state: GameState): number {
+  return activeSeatIndices(state).length;
+}
+
+/** The next seat clockwise from the current button that still has chips. */
+export function nextButtonSeat(state: GameState): number {
+  const n = state.seats.length;
+  for (let i = 1; i <= n; i++) {
+    const idx = (state.buttonSeat + i) % n;
+    const seat = state.seats[idx]!;
+    if (!seat.sittingOut && seat.stack > 0) return idx;
+  }
+  return state.buttonSeat;
+}
+
 /**
- * WAITING -> PREFLOP: deals hole cards and posts blinds. Heads-up follows the
- * standard rule that the button posts the small blind and acts first preflop.
+ * WAITING -> PREFLOP: deals hole cards and posts blinds among the players who
+ * still have chips. Eliminated seats are skipped entirely. Blind order follows
+ * the standard rules, including the heads-up case (button posts the small
+ * blind and acts first preflop) when exactly two players remain — even if
+ * they aren't in adjacent seats after others have busted.
  */
 export function startHand(state: GameState): GameState {
   if (state.street !== 'WAITING') {
@@ -71,10 +111,33 @@ export function startHand(state: GameState): GameState {
   const n = s.seats.length;
   s.street = 'PREFLOP';
 
-  const sbSeat = n === 2 ? s.buttonSeat : (s.buttonSeat + 1) % n;
-  const bbSeat = n === 2 ? (s.buttonSeat + 1) % n : (s.buttonSeat + 2) % n;
+  const active = activeSeatIndices(s);
+  if (active.length < 2) {
+    throw new Error('startHand needs at least 2 players with chips');
+  }
+  if (s.seats[s.buttonSeat]!.sittingOut || s.seats[s.buttonSeat]!.stack === 0) {
+    throw new Error('button must be on a seat with chips');
+  }
 
-  const dealOrder = Array.from({ length: n }, (_, i) => (sbSeat + i) % n);
+  // Active seats clockwise, with the button last (index 0 = first seat after
+  // the button = the small blind in 3-handed+).
+  const clockwise: number[] = [];
+  for (let i = 1; i <= n; i++) {
+    const idx = (s.buttonSeat + i) % n;
+    const seat = s.seats[idx]!;
+    if (!seat.sittingOut && seat.stack > 0) clockwise.push(idx);
+  }
+
+  const headsUp = active.length === 2;
+  const sbSeat = headsUp ? s.buttonSeat : clockwise[0]!;
+  const bbSeat = headsUp ? clockwise[0]! : clockwise[1]!;
+  // Preflop first to act: heads-up it's the SB/button; otherwise UTG (the
+  // seat after the big blind, wrapping to the button when 3-handed).
+  const firstToAct = headsUp ? sbSeat : (clockwise[2] ?? s.buttonSeat);
+
+  // Deal two cards to each active seat, clockwise starting from the SB.
+  const sbPos = clockwise.indexOf(sbSeat);
+  const dealOrder = [...clockwise.slice(sbPos), ...clockwise.slice(0, sbPos)];
   for (let round = 0; round < 2; round++) {
     for (const seatIdx of dealOrder) {
       const seat = s.seats[seatIdx]!;
@@ -90,7 +153,6 @@ export function startHand(state: GameState): GameState {
   s.minRaise = s.config.blinds[1];
   s.lastAggressor = bbSeat;
 
-  const firstToAct = n === 2 ? sbSeat : (bbSeat + 1) % n;
   s.actionOn = nextToActFrom(s, firstToAct) ?? -1;
 
   return s;

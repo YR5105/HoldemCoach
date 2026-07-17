@@ -24,11 +24,13 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
   const showFaceUp = isHero && seat.holeCards;
   const badge = !isHero && personality ? PERSONALITY_BADGE[personality] : null;
 
+  const eliminated = seat.sittingOut;
+
   return (
     <div
       className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-shadow ${
         isActive ? 'ring-2 ring-amber-400 shadow-lg shadow-amber-400/30' : ''
-      } ${seat.folded ? 'opacity-40' : ''}`}
+      } ${eliminated ? 'opacity-30' : seat.folded ? 'opacity-40' : ''}`}
     >
       <div className="flex gap-1">
         {seat.holeCards ? (
@@ -50,8 +52,8 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
             You
           </span>
         )}
-        <span className="font-medium">{position}</span>
-        {isButton && (
+        <span className="font-medium">{eliminated ? '—' : position}</span>
+        {isButton && !eliminated && (
           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-slate-900">
             D
           </span>
@@ -59,9 +61,15 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
       </div>
 
       <div className="text-xs text-slate-200">
-        <span className="font-semibold">{seat.stack}</span>
-        {seat.allIn && <span className="ml-1 text-amber-400">ALL-IN</span>}
-        {seat.folded && <span className="ml-1 text-slate-400">FOLDED</span>}
+        {eliminated ? (
+          <span className="font-semibold text-rose-400">OUT</span>
+        ) : (
+          <>
+            <span className="font-semibold">{seat.stack}</span>
+            {seat.allIn && <span className="ml-1 text-amber-400">ALL-IN</span>}
+            {seat.folded && <span className="ml-1 text-slate-400">FOLDED</span>}
+          </>
+        )}
       </div>
 
       {seat.committedThisStreet > 0 && (

@@ -328,10 +328,22 @@ const REASONS: Record<ReasonKey, { text: (ctx: ReasonCtx) => string; glossary: s
     glossary: 'position',
   },
   preflop_chart: {
-    text: ({ position, chartSaysPlay }) =>
-      chartSaysPlay
-        ? `This hand is strong enough to play from ${POSITION_NAMES[position] ?? position} — solid players get involved here.`
-        : `This hand is too weak to play from ${POSITION_NAMES[position] ?? position} — solid players fold it here.`,
+    text: ({ position, chartSaysPlay, facing }) => {
+      const seat = POSITION_NAMES[position] ?? position;
+      if (facing === 'open') {
+        return chartSaysPlay
+          ? `This hand is strong enough to raise from ${seat} — solid players get involved here.`
+          : `This hand is too weak to play from ${seat} — solid players fold it here.`;
+      }
+      if (facing === 'raise') {
+        return chartSaysPlay
+          ? `This hand is strong enough to continue even against the raise in front of you.`
+          : `An opponent had already raised, and it takes a much stronger hand to call or re-raise than to make the first raise — solid players fold this hand here.`;
+      }
+      return chartSaysPlay
+        ? `This hand is strong enough to continue even against a raise and a re-raise.`
+        : `There was already a raise and a re-raise in front of you — that usually means very strong hands, so almost everything should fold here.`;
+    },
     glossary: 'opening range',
   },
 };
@@ -342,6 +354,8 @@ interface ReasonCtx {
   position: string;
   /** True when the chart wanted hero to enter the pot and hero passed. */
   chartSaysPlay: boolean;
+  /** Preflop context: unopened pot, facing one raise, or facing a re-raise. */
+  facing: 'open' | 'raise' | 'reraise';
 }
 
 function pickReason(
@@ -556,6 +570,11 @@ export function gradeDecision(
 
   const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition);
   const requiredPct = Math.round((toCallBb / (ctx.potBb + toCallBb) || 0) * 100);
+  // How contested the pot already was when hero acted (preflop messages only).
+  // Counts all prior preflop raises, mirroring preflopChartVerdict's branches.
+  const priorRaises = state.actionLog.filter(
+    (e) => e.street === 'PREFLOP' && (e.action === 'raise' || e.action === 'bet'),
+  ).length;
   const { message, glossary } = buildMessage(
     displayBest,
     evLossBb,
@@ -564,6 +583,7 @@ export function gradeDecision(
       requiredPct,
       equityPct: Math.round(equity * 100),
       position: positionForSeat(state.buttonSeat, heroSeat, state.seats.length),
+      facing: priorRaises === 0 ? 'open' : priorRaises === 1 ? 'raise' : 'reraise',
       chartSaysPlay:
         (displayBest.action === 'raise' || displayBest.action === 'bet' || displayBest.action === 'call') &&
         (chosenAction.type === 'fold' || chosenAction.type === 'check'),

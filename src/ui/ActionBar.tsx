@@ -24,7 +24,10 @@ export function ActionBar({ state, heroSeat }: { state: GameState; heroSeat: num
     return Math.max(legal.minTo, Math.min(raw, legal.maxTo));
   });
 
-  const activeBetTarget = betTo ?? presets[1]!;
+  // Clamp to the current legal range: a target held over from a previous turn
+  // (e.g. a big raise sized when the stack was deep) must never exceed this
+  // decision's all-in amount, or the engine would reject the action.
+  const activeBetTarget = Math.max(legal.minTo, Math.min(betTo ?? presets[1]!, legal.maxTo));
 
   return (
     <div className="flex flex-col items-center gap-3 py-2">

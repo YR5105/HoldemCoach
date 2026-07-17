@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { decideBotAction, type Personality } from '../bots/botPolicy';
 import { isGradableDecision } from '../coach/grader';
 import type { GradeResult } from '../coach/graderTypes';
-import { applyAction, createInitialState, startHand } from '../engine';
+import { applyAction, createInitialState, nextButtonSeat, startHand } from '../engine';
 import type { Action, GameConfig, GameState } from '../engine/types';
 import { EquityClient, type EquitySnapshot } from '../equity/equityClient';
 import { buildHandDoc, saveGuess, saveHand, toCoachAnnotation, type CoachAnnotation } from './handHistory';
@@ -31,11 +31,14 @@ function currentPersonalities(players: number): Record<number, Personality> {
   return map;
 }
 
-function freshHandState(handNumber: number): GameState {
-  const config = currentConfig();
-  const buttonSeat = handNumber % config.players;
-  const seed = `hand-${handNumber}-${crypto.randomUUID()}`;
-  return startHand(createInitialState(config, seed, buttonSeat));
+/**
+ * Identifies a match's table shape (size + lineup). When the user changes
+ * either mid-match, the running match ends and a fresh one begins.
+ */
+function matchSignature(): string {
+  if (typeof localStorage === 'undefined') return '6';
+  const { tableSize, botLineup } = useSettingsStore.getState();
+  return `${tableSize}:${botLineup.slice(0, tableSize - 1).join(',')}`;
 }
 
 function loadDecisionCount(): number {
@@ -66,11 +69,31 @@ export interface FeedbackItem {
   seen: boolean;
 }
 
+export interface MatchOutcome {
+  /** True once the match has been decided (only meaningful at PAYOUT). */
+  over: boolean;
+  won: boolean;
+  heroStack: number;
+  /** Players still holding chips. */
+  survivors: number;
+}
+
+/**
+ * Whether the current match is decided. The match ends when hero busts (loss)
+ * or hero is the last player with chips (win). Only conclusive at PAYOUT.
+ */
+export function matchOutcome(state: GameState, heroSeat: number): MatchOutcome {
+  const heroStack = state.seats[heroSeat]?.stack ?? 0;
+  const survivors = state.seats.filter((s) => s.stack > 0).length;
+  const over = state.street === 'PAYOUT' && (heroStack === 0 || survivors <= 1);
+  return { over, won: survivors <= 1 && heroStack > 0, heroStack, survivors };
+}
+
 interface GameStore {
   state: GameState;
   heroSeat: number;
   handNumber: number;
-  /** Seat -> bot personality for the current hand (fixed at deal time). */
+  /** Seat -> bot personality, frozen for the whole match. */
   personalities: Record<number, Personality>;
   equity: EquitySnapshot | null;
   /** Graded decisions for the current hand, in order. */
@@ -84,7 +107,10 @@ interface GameStore {
   /** actionLog length at which the current guess prompt was satisfied. */
   guessSatisfiedAt: number | null;
   init: () => void;
+  /** Deal the next hand of the current match (or end it / start fresh as needed). */
   newHand: () => void;
+  /** Abandon the current match and start a brand-new table with full stacks. */
+  startNewGame: () => void;
   heroAction: (action: Omit<Action, 'seat'>) => void;
   openFeedback: (index: number | null) => void;
   submitGuess: (guessPct: number) => void;
@@ -100,6 +126,10 @@ export const useGameStore = create<GameStore>((set, get) => {
   let handAnnotations = new Map<number, CoachAnnotation>();
   let pendingGrades = 0;
   let handSaved = false;
+  // Chips each seat started the current hand with (for replay reconstruction).
+  let handStartStacks: number[] = [];
+  // Table shape of the running match; a change means "start a fresh match".
+  let matchSig = matchSignature();
 
   equityClient?.onGrade((grade, requestId) => {
     const actionIndex = gradeIndexByRequest.get(requestId);
@@ -115,8 +145,8 @@ export const useGameStore = create<GameStore>((set, get) => {
     const { state, heroSeat, personalities } = get();
     if (state.street !== 'PAYOUT' || pendingGrades > 0 || handSaved) return;
     handSaved = true;
-    void saveHand(buildHandDoc(state, heroSeat, handAnnotations, personalities)).catch((err) =>
-      console.error('failed to save hand history:', err),
+    void saveHand(buildHandDoc(state, heroSeat, handAnnotations, personalities, handStartStacks)).catch(
+      (err) => console.error('failed to save hand history:', err),
     );
   }
 
@@ -126,8 +156,10 @@ export const useGameStore = create<GameStore>((set, get) => {
     if (!equityClient) return;
     const hero = state.seats[heroSeat]!;
     if (hero.folded || !hero.holeCards || state.street === 'PAYOUT') return;
+    // Only seats actually dealt into this hand are villains (excludes
+    // eliminated seats sitting out).
     const villainSeats = state.seats
-      .filter((s) => s.seatIndex !== heroSeat && !s.folded)
+      .filter((s) => s.seatIndex !== heroSeat && !s.folded && s.holeCards)
       .map((s) => s.seatIndex);
     if (villainSeats.length === 0) return;
     equityClient.requestForState(state, heroSeat, villainSeats, personalities);
@@ -151,42 +183,92 @@ export const useGameStore = create<GameStore>((set, get) => {
     }, BOT_DELAY_MS);
   }
 
-  const initialState = freshHandState(0);
+  /** Resets per-hand bookkeeping and commits a freshly dealt hand to the store. */
+  function commitHand(
+    state: GameState,
+    handNumber: number,
+    startStacks: number[],
+    extra: Partial<GameStore> = {},
+  ) {
+    handAnnotations = new Map();
+    pendingGrades = 0;
+    handSaved = false;
+    gradeIndexByRequest.clear();
+    handStartStacks = startStacks;
+    set({
+      state,
+      handNumber,
+      feedback: [],
+      openFeedbackIndex: null,
+      lastGuess: null,
+      guessSatisfiedAt: null,
+      ...extra,
+    });
+    requestEquity();
+    scheduleBotIfNeeded();
+  }
+
+  /** Deal hand 0 of a brand-new match: full stacks, fresh personalities. */
+  function dealFreshGame() {
+    const config = currentConfig();
+    const startStacks = Array<number>(config.players).fill(config.startingStack);
+    const seed = `game-${crypto.randomUUID()}-h0`;
+    const state = startHand(createInitialState(config, seed, 0, startStacks));
+    matchSig = matchSignature();
+    commitHand(state, 0, startStacks, {
+      personalities: currentPersonalities(config.players),
+      handNumber: 0,
+    });
+  }
 
   return {
-    state: initialState,
+    ...(() => {
+      // Build the initial hand eagerly so `state` is never null.
+      const config = currentConfig();
+      const startStacks = Array<number>(config.players).fill(config.startingStack);
+      const state = startHand(createInitialState(config, `game-${crypto.randomUUID()}-h0`, 0, startStacks));
+      handStartStacks = startStacks;
+      return {
+        state,
+        handNumber: 0,
+        personalities: currentPersonalities(config.players),
+      };
+    })(),
     heroSeat: HERO_SEAT,
-    handNumber: 0,
-    personalities: currentPersonalities(initialState.seats.length),
     equity: null,
     feedback: [],
     openFeedbackIndex: null,
     decisionCount: loadDecisionCount(),
     lastGuess: null,
     guessSatisfiedAt: null,
+
     init: () => {
       requestEquity();
       scheduleBotIfNeeded();
     },
+
+    startNewGame: () => dealFreshGame(),
+
     newHand: () => {
-      const handNumber = get().handNumber + 1;
-      handAnnotations = new Map();
-      pendingGrades = 0;
-      handSaved = false;
-      gradeIndexByRequest.clear();
-      const state = freshHandState(handNumber);
-      set({
-        state,
-        handNumber,
-        personalities: currentPersonalities(state.seats.length),
-        feedback: [],
-        openFeedbackIndex: null,
-        lastGuess: null,
-        guessSatisfiedAt: null,
-      });
-      requestEquity();
-      scheduleBotIfNeeded();
+      const { state: prev, heroSeat, handNumber } = get();
+
+      // A table-shape change (size or lineup) starts a completely fresh match.
+      if (matchSig !== matchSignature()) {
+        dealFreshGame();
+        return;
+      }
+
+      // No-op if the match is already decided (the UI shows New Game instead).
+      if (matchOutcome(prev, heroSeat).over) return;
+
+      // Continue the match: carry stacks over and move the button.
+      const startStacks = prev.seats.map((s) => s.stack);
+      const button = nextButtonSeat(prev);
+      const seed = `game-${crypto.randomUUID()}-h${handNumber + 1}`;
+      const state = startHand(createInitialState(prev.config, seed, button, startStacks));
+      commitHand(state, handNumber + 1, startStacks);
     },
+
     heroAction: (action) => {
       const { state, heroSeat, decisionCount } = get();
       if (state.actionOn !== heroSeat) return;
@@ -213,6 +295,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       applyAndRefresh(state, fullAction);
       scheduleBotIfNeeded();
     },
+
     openFeedback: (index) => {
       set((prev) => ({
         openFeedbackIndex: index,
@@ -222,6 +305,7 @@ export const useGameStore = create<GameStore>((set, get) => {
             : prev.feedback.map((f, i) => (i === index ? { ...f, seen: true } : f)),
       }));
     },
+
     submitGuess: (guessPct) => {
       const { equity, state } = get();
       if (!equity) return;

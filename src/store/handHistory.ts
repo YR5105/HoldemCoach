@@ -26,6 +26,8 @@ export interface HandDoc {
     /** Needed (with seed) to reconstruct the hand for the replayer. */
     buttonSeat: number;
     startingStack: number;
+    /** Per-seat chips at the start of THIS hand (continuous-match reconstruction). */
+    startingStacks?: number[];
   };
   holeCards: Record<number, Card[]>;
   board: Card[];
@@ -113,6 +115,7 @@ export function buildHandDoc(
   heroSeat: number,
   gradesByActionIndex: Map<number, CoachAnnotation>,
   personalities: Record<number, string> = {},
+  startingStacks?: number[],
 ): HandDoc {
   const showdown = (state.payout?.showdownHands ?? undefined) !== undefined;
   return {
@@ -128,6 +131,7 @@ export function buildHandDoc(
         .map((s) => personalities[s.seatIndex] ?? 'TAG'),
       buttonSeat: state.buttonSeat,
       startingStack: state.config.startingStack,
+      startingStacks,
     },
     holeCards: Object.fromEntries(
       state.seats.filter((s) => s.holeCards).map((s) => [s.seatIndex, s.holeCards!]),
