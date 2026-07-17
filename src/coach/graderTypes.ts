@@ -31,7 +31,10 @@ export interface GradeResult {
   evLossBb: number;
   severity: Severity;
   reasonKey: ReasonKey;
-  /** "{BetterAction} was better (+{Δ}bb). {Reason}." — ≤140 chars per spec §6.4. */
+  /**
+   * "{BetterAction} was the better play. {Reason} That cost you about {Δ} big
+   * blinds." — plain English (no poker slang or abbreviations), ≤260 chars.
+   */
   message: string;
   /** Glossary term the reason links to. */
   glossary: string;

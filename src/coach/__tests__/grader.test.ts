@@ -67,8 +67,8 @@ describe('river pot-odds fixture (hand-computed EVs)', () => {
     expect(grade.evLossBb).toBeGreaterThan(4.4);
     expect(grade.severity).toBe('BLUNDER');
     expect(grade.reasonKey).toBe('pot_odds');
-    expect(grade.message).toContain('Fold was better');
-    expect(grade.message.length).toBeLessThanOrEqual(140);
+    expect(grade.message).toContain('Folding was the better play');
+    expect(grade.message.length).toBeLessThanOrEqual(260);
   });
 
   it('folding the same spot grades OK with zero EV loss', () => {
@@ -223,7 +223,7 @@ describe('preflop chart grading (spec §3 tolerance)', () => {
 
     const grade = gradeDecision(s, 0, { seat: 0, type: 'call' }, evaluator);
     expect(grade.best.action).toBe('fold');
-    expect(grade.message).toContain('Fold was better');
+    expect(grade.message).toContain('Folding was the better play');
     expect(grade.severity).not.toBe('OK');
   });
 });

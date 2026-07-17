@@ -297,29 +297,41 @@ function preflopChartVerdict(state: GameState, heroSeat: number): PreflopChartVe
 // Reasons & messages (spec §6.4)
 // ---------------------------------------------------------------------------
 
+/** Plain-English seat names so messages never lean on position jargon. */
+const POSITION_NAMES: Record<string, string> = {
+  UTG: 'the first seat to act',
+  HJ: 'the hijack seat (two seats before the dealer)',
+  CO: 'the cutoff seat (just before the dealer)',
+  BTN: 'the dealer button (the best seat — you act last)',
+  SB: 'the small blind',
+  BB: 'the big blind',
+};
+
 const REASONS: Record<ReasonKey, { text: (ctx: ReasonCtx) => string; glossary: string }> = {
   pot_odds: {
     text: ({ requiredPct, equityPct }) =>
-      `You need ${requiredPct}% equity to call but have ~${equityPct}%.`,
+      equityPct >= requiredPct
+        ? `The pot was offering a good price: you only needed to win about ${requiredPct}% of the time, and your hand wins about ${equityPct}%.`
+        : `The price was too high: you would need to win about ${requiredPct}% of the time to break even, but your hand only wins about ${equityPct}%.`,
     glossary: 'pot odds',
   },
   missed_value: {
-    text: () => 'Your hand is strong — betting builds the pot while ahead.',
+    text: () => 'Your hand is very strong — betting gets more chips into the pot while you are ahead.',
     glossary: 'value bet',
   },
   missed_bluff: {
-    text: () => 'Their range is weak here; betting often takes the pot.',
+    text: () => 'Your opponent is unlikely to have a strong hand here — a bet would often win the pot right away.',
     glossary: 'fold equity',
   },
   oop_discipline: {
-    text: () => 'Out of position, marginal hands play worse — tighten up.',
+    text: () => 'You act before your opponent on every betting round, which is a disadvantage — stick to stronger hands in spots like this.',
     glossary: 'position',
   },
   preflop_chart: {
     text: ({ position, chartSaysPlay }) =>
       chartSaysPlay
-        ? `This hand is in the baseline ${position} range — play it.`
-        : `This hand is outside the baseline ${position} range.`,
+        ? `This hand is strong enough to play from ${POSITION_NAMES[position] ?? position} — solid players get involved here.`
+        : `This hand is too weak to play from ${POSITION_NAMES[position] ?? position} — solid players fold it here.`,
     glossary: 'opening range',
   },
 };
@@ -397,10 +409,11 @@ function classifyDecision(
 
 function actionLabel(a: ActionEV, bigBlind: number): string {
   if (a.action === 'bet' || a.action === 'raise') {
-    const bb = a.amount !== undefined ? ` ${(a.amount / bigBlind).toFixed(1)}bb` : '';
-    return `${a.action === 'bet' ? 'Bet' : 'Raise to'}${bb}`;
+    const bb = a.amount !== undefined ? ` ${(a.amount / bigBlind).toFixed(1)} big blinds` : '';
+    return a.action === 'bet' ? `Betting${bb}` : `Raising to${bb}`;
   }
-  return a.action[0]!.toUpperCase() + a.action.slice(1);
+  const labels: Partial<Record<ActionType, string>> = { fold: 'Folding', call: 'Calling', check: 'Checking' };
+  return labels[a.action] ?? a.action[0]!.toUpperCase() + a.action.slice(1);
 }
 
 function buildMessage(
@@ -411,8 +424,10 @@ function buildMessage(
   bigBlind: number,
 ): { message: string; glossary: string } {
   const reason = REASONS[reasonKey];
-  const message = `${actionLabel(best, bigBlind)} was better (+${evLossBb.toFixed(1)}bb). ${reason.text(reasonCtx)}`;
-  return { message: message.slice(0, 140), glossary: reason.glossary };
+  const message =
+    `${actionLabel(best, bigBlind)} was the better play. ${reason.text(reasonCtx)}` +
+    ` That cost you about ${evLossBb.toFixed(1)} big blinds.`;
+  return { message: message.slice(0, 260), glossary: reason.glossary };
 }
 
 // ---------------------------------------------------------------------------

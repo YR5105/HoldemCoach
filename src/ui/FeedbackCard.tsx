@@ -1,10 +1,19 @@
-import type { GradeResult, Severity } from '../coach/graderTypes';
+import type { GradeResult, HeroBucket, Severity } from '../coach/graderTypes';
 
 export const SEVERITY_COLOR: Record<Severity, string> = {
   OK: '#94a3b8', // slate-400 (gray)
   INACCURACY: '#facc15', // yellow-400
   MISTAKE: '#fb923c', // orange-400
   BLUNDER: '#f87171', // red-400
+};
+
+/** Beginner-friendly hand-strength labels (replaces jargon like "air"). */
+const BUCKET_LABEL: Record<HeroBucket, string> = {
+  MONSTER: 'monster hand',
+  STRONG: 'strong hand',
+  MARGINAL: 'medium-strength hand',
+  DRAW: 'drawing hand',
+  AIR: 'weak hand',
 };
 
 const SEVERITY_LABEL: Record<Severity, string> = {
@@ -40,14 +49,14 @@ export function FeedbackCard({ grade, onClose }: { grade: GradeResult; onClose?:
       </div>
 
       {grade.severity === 'OK' ? (
-        <p className="text-sm text-slate-200">Good decision — no EV lost.</p>
+        <p className="text-sm text-slate-200">Good decision — you didn't give up anything here.</p>
       ) : (
         <p className="text-sm text-slate-200">{grade.message}</p>
       )}
 
       <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-2 text-xs text-slate-400">
         <span>
-          equity {Math.round(grade.equity * 100)}% · {grade.heroBucket.toLowerCase()}
+          wins ~{Math.round(grade.equity * 100)}% of the time · {BUCKET_LABEL[grade.heroBucket]}
         </span>
         <span className="underline decoration-dotted" title="Glossary term (full glossary coming with onboarding)">
           {grade.glossary}
