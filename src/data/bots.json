@@ -1,0 +1,33 @@
+{
+  "TAG": {
+    "foldToCbet": 0.45,
+    "cbet": 0.65,
+    "bluffRatio": 0.3,
+    "raiseStrong": 0.8
+  },
+  "LAG": {
+    "foldToCbet": 0.35,
+    "cbet": 0.8,
+    "bluffRatio": 0.45,
+    "raiseStrong": 0.7
+  },
+  "Station": {
+    "foldToCbet": 0.15,
+    "cbet": 0.4,
+    "bluffRatio": 0.1,
+    "raiseStrong": 0.5,
+    "callsWithAnyPairOrDraw": true
+  },
+  "Nit": {
+    "foldToCbet": 0.65,
+    "cbet": 0.55,
+    "bluffRatio": 0.1,
+    "raiseStrong": 0.9
+  },
+  "Balanced": {
+    "foldToCbet": 0.5,
+    "cbet": 0.6,
+    "bluffRatio": 0.33,
+    "raiseStrong": 0.75
+  }
+}
