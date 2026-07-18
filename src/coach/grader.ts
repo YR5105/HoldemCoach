@@ -625,6 +625,21 @@ export function gradeDecision(
   };
 }
 
+/**
+ * The action the preflop chart recommends here, or null when the chart is
+ * silent (e.g. a BB free check). Pure — no equity simulation — so callers can
+ * check the grader's chart decision across many hands without paying for Monte
+ * Carlo. This is the exact verdict gradeDecision uses to grade preflop spots,
+ * exposed so tests can assert bots and the grader share one range model.
+ */
+export function preflopChartAction(
+  state: GameState,
+  heroSeat: number,
+): 'raise' | 'call' | 'fold' | null {
+  if (state.street !== 'PREFLOP') return null;
+  return preflopChartVerdict(state, heroSeat)?.chartAction ?? null;
+}
+
 /** Whether this decision is gradable at all (hero can act, has a live opponent). */
 export function isGradableDecision(state: GameState, heroSeat: number): boolean {
   const hero = state.seats[heroSeat];
