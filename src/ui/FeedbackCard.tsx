@@ -56,7 +56,11 @@ export function FeedbackCard({ grade, onClose }: { grade: GradeResult; onClose?:
 
       <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-2 text-xs text-slate-400">
         <span>
-          wins ~{Math.round(grade.equity * 100)}% of the time · {BUCKET_LABEL[grade.heroBucket]}
+          wins ~{Math.round(grade.equity * 100)}% of the time
+          {/* The hand-strength bucket describes a MADE hand, so it only makes
+              sense once there's a board — a preflop "weak hand" for 99 is
+              misleading. */}
+          {grade.street !== 'PREFLOP' && ` · ${BUCKET_LABEL[grade.heroBucket]}`}
         </span>
         <span className="underline decoration-dotted" title="Glossary term (full glossary coming with onboarding)">
           {grade.glossary}

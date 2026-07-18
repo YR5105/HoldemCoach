@@ -526,35 +526,38 @@ export function gradeDecision(
   let displayBest = best;
 
   // Preflop chart grading overrides the EV numbers where the chart speaks
-  // (spec §3): a chart-matching action is OK; one step off a boundary is at
-  // most an Inaccuracy; otherwise EV loss is measured against the CHART's
-  // action (the one-street EV model is too crude preflop to outrank the
-  // solver-derived charts, so the coaching message must name the chart play).
+  // (spec §3): the recommended action is always the CHART's action (the
+  // one-street EV model is too crude preflop to outrank the solver-derived
+  // charts). A chart-matching action is OK; one step off a boundary is at
+  // most an Inaccuracy; otherwise EV loss is measured against the chart action.
   if (state.street === 'PREFLOP') {
     const verdict = preflopChartVerdict(state, heroSeat);
     if (verdict) {
+      const chartCandidate =
+        verdict.chartAction === 'raise'
+          ? candidates.find((c) => c.action === 'raise' || c.action === 'bet')
+          : candidates.find((c) => c.action === verdict.chartAction);
+      // The coach always recommends the chart line — even when hero already
+      // played it (so "best" reads as "your play was correct", and the Review
+      // screen never shows a spurious EV-model alternative).
+      if (chartCandidate) displayBest = chartCandidate;
+
       const chosenMatches =
         (verdict.chartAction === 'raise' && (chosenAction.type === 'raise' || chosenAction.type === 'bet')) ||
         (verdict.chartAction === 'call' && chosenAction.type === 'call') ||
         (verdict.chartAction === 'fold' &&
           (chosenAction.type === 'fold' || chosenAction.type === 'check'));
+
       if (chosenMatches) {
         evLossBb = 0;
         severity = 'OK';
-      } else {
-        const chartCandidate =
-          verdict.chartAction === 'raise'
-            ? candidates.find((c) => c.action === 'raise' || c.action === 'bet')
-            : candidates.find((c) => c.action === verdict.chartAction);
-        if (chartCandidate) {
-          displayBest = chartCandidate;
-          evLossBb = Math.max(0, chartCandidate.evBb - chosen.evBb);
-          severity = severityForEvLoss(evLossBb, thresholds);
-        }
+      } else if (chartCandidate) {
+        evLossBb = Math.max(0, chartCandidate.evBb - chosen.evBb);
+        severity = severityForEvLoss(evLossBb, thresholds);
         if (verdict.nearBoundary && severity !== 'OK') {
           evLossBb = Math.min(evLossBb, 0.3);
           severity = 'INACCURACY';
-        } else if (severity === 'OK' && evLossBb === 0 && chartCandidate) {
+        } else if (severity === 'OK' && evLossBb === 0) {
           // The EV model sees no loss but the chart disagrees with the line:
           // still surface it as a light Inaccuracy so chart deviations are
           // never silently endorsed.
@@ -584,9 +587,12 @@ export function gradeDecision(
       equityPct: Math.round(equity * 100),
       position: positionForSeat(state.buttonSeat, heroSeat, state.seats.length),
       facing: priorRaises === 0 ? 'open' : priorRaises === 1 ? 'raise' : 'reraise',
+      // Whether the CHART wants hero in the pot — this is what the rationale
+      // explains, independent of what hero actually did. `displayBest` is
+      // always the chart action preflop, so a limp/wrong-size open still gets
+      // the correct "strong enough to play" wording (not "too weak, fold it").
       chartSaysPlay:
-        (displayBest.action === 'raise' || displayBest.action === 'bet' || displayBest.action === 'call') &&
-        (chosenAction.type === 'fold' || chosenAction.type === 'check'),
+        displayBest.action === 'raise' || displayBest.action === 'bet' || displayBest.action === 'call',
     },
     bigBlind,
   );
