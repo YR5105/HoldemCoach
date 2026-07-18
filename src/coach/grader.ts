@@ -524,6 +524,10 @@ export function gradeDecision(
   let evLossBb = Math.max(0, best.evBb - chosen.evBb);
   let severity: Severity = severityForEvLoss(evLossBb, thresholds);
   let displayBest = best;
+  // Set when hero clearly deviated from the preflop chart (not merely one step
+  // off a boundary). Such deviations must never be downgraded back to OK by the
+  // generic mixed-strategy tolerance below, however small the crude EV loss.
+  let preflopChartDeviation = false;
 
   // Preflop chart grading overrides the EV numbers where the chart speaks
   // (spec §3): the recommended action is always the CHART's action (the
@@ -554,22 +558,30 @@ export function gradeDecision(
       } else if (chartCandidate) {
         evLossBb = Math.max(0, chartCandidate.evBb - chosen.evBb);
         severity = severityForEvLoss(evLossBb, thresholds);
-        if (verdict.nearBoundary && severity !== 'OK') {
-          evLossBb = Math.min(evLossBb, 0.3);
-          severity = 'INACCURACY';
-        } else if (severity === 'OK' && evLossBb === 0) {
-          // The EV model sees no loss but the chart disagrees with the line:
-          // still surface it as a light Inaccuracy so chart deviations are
-          // never silently endorsed.
-          evLossBb = 0.1;
-          severity = 'INACCURACY';
+        if (verdict.nearBoundary) {
+          // One step off the chart boundary is a tolerable deviation: cap it at
+          // a light Inaccuracy, and let genuinely near-breakeven ones stay OK.
+          if (severity !== 'OK') {
+            evLossBb = Math.min(evLossBb, 0.3);
+            severity = 'INACCURACY';
+          }
+        } else {
+          // A clear chart deviation: never silently endorse it. Even when the
+          // crude one-street EV model rates the loss as mixed-strategy noise
+          // (< 0.1bb), surface it as at least a light Inaccuracy.
+          preflopChartDeviation = true;
+          if (severity === 'OK') {
+            evLossBb = Math.max(evLossBb, 0.1);
+            severity = 'INACCURACY';
+          }
         }
       }
     }
   }
 
-  // Mixed-strategy rule (§6.4): candidates within 0.1bb of best are all OK.
-  if (evLossBb < 0.1) severity = 'OK';
+  // Mixed-strategy rule (§6.4): candidates within 0.1bb of best are all OK —
+  // except a clear preflop chart deviation, which was flagged deliberately above.
+  if (!preflopChartDeviation && evLossBb < 0.1) severity = 'OK';
 
   const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition);
   const requiredPct = Math.round((toCallBb / (ctx.potBb + toCallBb) || 0) * 100);
