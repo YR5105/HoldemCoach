@@ -54,7 +54,8 @@ self.onmessage = (event: MessageEvent<EquityWorkerRequest>) => {
     else if (req.type === 'GRADE_REQ') msg = handleGrade(req);
     else return;
   } catch (err) {
-    msg = { type: 'EQUITY_ERR', id: (req as { id?: number }).id ?? -1, message: err instanceof Error ? err.message : String(err) };
+    // Guard the id read too: a null/garbage payload must not crash the handler.
+    msg = { type: 'EQUITY_ERR', id: (req as { id?: number } | null | undefined)?.id ?? -1, message: err instanceof Error ? err.message : String(err) };
   }
   self.postMessage(msg);
 };
