@@ -37,7 +37,7 @@ function allCanonicalHands(): string[] {
 function comboFor(hand: string): [Card, Card] {
   if (hand.length === 2) return [`${hand[0]}h`, `${hand[0]}d`] as [Card, Card];
   const [hi, lo, suit] = [hand[0]!, hand[1]!, hand[2]!];
-  return suit === 's' ? [`${hi}h`, `${lo}h`] : [`${hi}h`, `${lo}d`] as [Card, Card];
+  return (suit === 's' ? [`${hi}h`, `${lo}h`] : [`${hi}h`, `${lo}d`]) as [Card, Card];
 }
 
 /** decideBotAction's action type mapped onto the chart's three verdicts. */

@@ -23,7 +23,8 @@ beforeAll(async () => {
     onmessage: null as unknown,
   };
   await import('../equity.worker');
-  const onmessage = (globalThis as { self: { onmessage: (e: { data: unknown }) => void } }).self.onmessage;
+  const onmessage = (globalThis as unknown as { self: { onmessage: (e: { data: unknown }) => void } }).self
+    .onmessage;
   dispatch = (data: unknown) => {
     posted = [];
     onmessage({ data });
