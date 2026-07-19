@@ -54,7 +54,7 @@ export function Table() {
               <div key={`empty-${i}`} className="h-16 w-12 rounded-md border border-dashed border-white/20" />
             ))}
           </div>
-          <div className="rounded-full bg-black/30 px-3 py-1 text-sm font-medium">
+          <div data-testid="pot" className="rounded-full bg-black/30 px-3 py-1 text-sm font-medium">
             Pot: {state.seats.reduce((sum, s) => sum + s.committedTotal, 0)}
           </div>
           {state.street === 'PAYOUT' && state.payout && (

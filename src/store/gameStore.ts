@@ -9,7 +9,12 @@ import { buildHandDoc, saveGuess, saveHand, toCoachAnnotation, type CoachAnnotat
 import { useSettingsStore } from './settingsStore';
 
 export const HERO_SEAT = 0;
-const BOT_DELAY_MS = 500;
+// Pacing between bot actions. The `?fastbots` URL flag collapses it for
+// end-to-end tests so a full match plays out in seconds; normal play is 500ms.
+const BOT_DELAY_MS =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('fastbots')
+    ? 20
+    : 500;
 /** Every Nth hero decision becomes a "guess first" prompt (spec §7 Q2). */
 export const GUESS_EVERY = 25;
 const DECISION_COUNT_KEY = 'holdemcoach-decision-count';

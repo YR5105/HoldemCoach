@@ -34,7 +34,11 @@ export function WinDial({ equity, potOdds }: { equity: EquitySnapshot | null; po
             className="transition-all duration-300"
           />
         </svg>
-        <div className="absolute inset-0 flex items-center justify-center text-sm font-bold" style={{ color }}>
+        <div
+          data-testid="win-percent"
+          className="absolute inset-0 flex items-center justify-center text-sm font-bold"
+          style={{ color }}
+        >
           {equityPct !== null ? `${Math.round(equityPct)}%` : '…'}
         </div>
       </div>
