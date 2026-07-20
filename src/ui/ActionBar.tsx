@@ -72,12 +72,12 @@ export function ActionBar({ state, heroSeat }: { state: GameState; heroSeat: num
   }
 
   const btn =
-    'rounded-lg px-5 py-2 font-semibold text-white transition-transform duration-100 active:scale-95';
+    'flex-1 min-h-12 rounded-lg px-3 py-2 font-semibold text-white transition-transform duration-100 active:scale-95 sm:px-5';
 
   return (
-    <div className="flex flex-col items-center gap-3 py-2">
+    <div className="flex w-full max-w-md flex-col items-center gap-3 py-2">
       {(legal.canBet || legal.canRaise) && (
-        <div className="flex w-full max-w-md flex-col items-center gap-1.5">
+        <div className="flex w-full flex-col items-center gap-1.5">
           <input
             type="range"
             min={legal.minTo}
@@ -88,7 +88,7 @@ export function ActionBar({ state, heroSeat }: { state: GameState; heroSeat: num
             className="w-full accent-amber-400"
             aria-label="Bet amount"
           />
-          <div className="flex gap-2 text-xs">
+          <div className="flex flex-wrap justify-center gap-2 text-xs">
             {(['33%', '66%', '125%'] as const).map((label, i) => (
               <button
                 key={label}
@@ -103,7 +103,7 @@ export function ActionBar({ state, heroSeat }: { state: GameState; heroSeat: num
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className="flex w-full gap-2 sm:gap-3">
         <button type="button" onClick={() => heroAction({ type: 'fold' })} className={`${btn} bg-rose-600 hover:bg-rose-500`}>
           Fold
           <Key>F</Key>

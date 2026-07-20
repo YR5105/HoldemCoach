@@ -24,15 +24,15 @@ function App() {
   }
 
   return (
-    <div className="flex min-h-svh flex-col bg-slate-950 text-slate-100">
-      <nav className="flex items-center justify-center gap-1 border-b border-slate-800 px-4 py-2">
-        <span className="mr-4 text-sm font-bold tracking-wide text-emerald-400">HoldemCoach</span>
+    <div className="flex min-h-svh flex-col overflow-x-hidden bg-slate-950 text-slate-100">
+      <nav className="flex items-center justify-center gap-0.5 border-b border-slate-800 px-2 py-2 sm:gap-1 sm:px-4">
+        <span className="mr-1.5 text-xs font-bold tracking-wide text-emerald-400 sm:mr-4 sm:text-sm">HoldemCoach</span>
         {TABS.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`rounded-lg px-3 py-1.5 text-sm transition-colors active:scale-95 ${
+            className={`rounded-lg px-2 py-1.5 text-xs transition-colors active:scale-95 sm:px-3 sm:text-sm ${
               tab === t.id ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'
             }`}
           >

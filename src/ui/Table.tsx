@@ -58,15 +58,15 @@ export function Table() {
   const pot = state.seats.reduce((sum, s) => sum + s.committedTotal, 0);
 
   return (
-    <div className="flex flex-col items-center justify-center bg-slate-950 p-4 text-slate-100">
-      <div className="relative aspect-[16/10] w-full max-w-3xl rounded-[45%] border-8 border-slate-800 bg-emerald-800 shadow-2xl">
+    <div className="flex flex-col items-center justify-center bg-slate-950 p-2 text-slate-100 sm:p-4">
+      <div className="relative aspect-[4/5] w-full max-w-3xl rounded-[38%] border-4 border-slate-800 bg-emerald-800 shadow-2xl sm:aspect-[16/10] sm:rounded-[45%] sm:border-8">
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
           <div className="flex gap-1.5">
             {state.board.map((c, i) => (
               <PlayingCard key={i} card={c} />
             ))}
             {Array.from({ length: 5 - state.board.length }).map((_, i) => (
-              <div key={`empty-${i}`} className="h-16 w-12 rounded-md border border-dashed border-white/20" />
+              <div key={`empty-${i}`} className="h-11 w-8 rounded-md border border-dashed border-white/20 sm:h-16 sm:w-12" />
             ))}
           </div>
           <div data-testid="pot" className="rounded-full bg-black/30 px-3 py-1 text-sm font-medium">
@@ -131,7 +131,7 @@ export function Table() {
           )
         ) : (
           <div className="flex flex-col items-center gap-2">
-            <div className="flex items-center justify-center gap-8">
+            <div className="flex w-full flex-col items-center gap-3 sm:flex-row sm:justify-center sm:gap-8">
               <HeroEquityDisplay />
               <ActionBar state={state} heroSeat={heroSeat} />
             </div>

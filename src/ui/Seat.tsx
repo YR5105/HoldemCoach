@@ -28,7 +28,7 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
 
   return (
     <div
-      className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-all duration-300 ${
+      className={`flex flex-col items-center gap-0.5 rounded-xl px-1.5 py-1 transition-all duration-300 sm:gap-1 sm:px-3 sm:py-2 ${
         isActive ? 'animate-active-pulse ring-2 ring-amber-400' : ''
       } ${eliminated ? 'opacity-30' : seat.folded ? 'opacity-40' : ''}`}
     >
@@ -38,7 +38,7 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
             <PlayingCard key={i} card={showFaceUp ? c : undefined} faceDown={!showFaceUp} small />
           ))
         ) : (
-          <div className="h-11 w-8" />
+          <div className="h-10 w-7 sm:h-11 sm:w-8" />
         )}
       </div>
 

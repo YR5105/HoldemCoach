@@ -4,7 +4,7 @@ const SUIT_SYMBOL: Record<string, string> = { c: '♣', d: '♦', h: '♥', s: '
 const RED_SUITS = new Set(['h', 'd']);
 
 export function PlayingCard({ card, faceDown = false, small = false }: { card?: CardType; faceDown?: boolean; small?: boolean }) {
-  const sizeClasses = small ? 'w-8 h-11 text-xs' : 'w-12 h-16 text-base';
+  const sizeClasses = small ? 'w-7 h-10 text-[11px] sm:w-8 sm:h-11 sm:text-xs' : 'w-8 h-11 text-sm sm:w-12 sm:h-16 sm:text-base';
 
   if (faceDown || !card) {
     return (
