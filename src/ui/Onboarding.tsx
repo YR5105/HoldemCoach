@@ -15,7 +15,7 @@ export function Onboarding() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6">
+      <div className="animate-pop-in w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6">
         <div className="mb-4 flex gap-1.5">
           {[0, 1, 2].map((i) => (
             <div

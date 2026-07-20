@@ -27,7 +27,11 @@ export function FeedbackCard({ grade, onClose }: { grade: GradeResult; onClose?:
   const color = SEVERITY_COLOR[grade.severity];
 
   return (
-    <div data-testid="feedback-card" className="w-80 rounded-xl border border-slate-700 bg-slate-900 p-4 text-left shadow-2xl">
+    <div
+      data-testid="feedback-card"
+      className="animate-pop-in w-80 rounded-xl border-t-4 border border-slate-700 bg-slate-900 p-4 text-left shadow-2xl"
+      style={{ borderTopColor: color }}
+    >
       <div className="mb-2 flex items-center justify-between">
         <span
           className="rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-slate-900"

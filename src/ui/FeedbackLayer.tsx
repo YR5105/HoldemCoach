@@ -36,7 +36,7 @@ export function FeedbackLayer() {
           type="button"
           aria-label="Show coach feedback"
           onClick={() => openFeedback(openIndex === latestIndex ? null : latestIndex)}
-          className="absolute -top-1.5 right-0 rounded-full ring-2 ring-slate-900 transition-transform hover:scale-125"
+          className="animate-pop-in absolute -top-1.5 right-0 rounded-full ring-2 ring-slate-900 transition-transform hover:scale-125"
           style={{
             width: 12,
             height: 12,
@@ -46,7 +46,7 @@ export function FeedbackLayer() {
       )}
 
       {openItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => openFeedback(null)}>
+        <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => openFeedback(null)}>
           <div onClick={(e) => e.stopPropagation()}>
             <FeedbackCard grade={openItem.grade} onClose={() => openFeedback(null)} />
           </div>

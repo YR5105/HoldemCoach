@@ -28,8 +28,8 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
 
   return (
     <div
-      className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-shadow ${
-        isActive ? 'ring-2 ring-amber-400 shadow-lg shadow-amber-400/30' : ''
+      className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-all duration-300 ${
+        isActive ? 'animate-active-pulse ring-2 ring-amber-400' : ''
       } ${eliminated ? 'opacity-30' : seat.folded ? 'opacity-40' : ''}`}
     >
       <div className="flex gap-1">

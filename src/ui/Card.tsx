@@ -9,7 +9,7 @@ export function PlayingCard({ card, faceDown = false, small = false }: { card?: 
   if (faceDown || !card) {
     return (
       <div
-        className={`${sizeClasses} rounded-md border border-indigo-300/40 bg-gradient-to-br from-indigo-700 to-indigo-900 shadow-sm`}
+        className={`${sizeClasses} animate-deal-in rounded-md border border-indigo-300/40 bg-gradient-to-br from-indigo-700 to-indigo-900 shadow-sm`}
       />
     );
   }
@@ -20,7 +20,7 @@ export function PlayingCard({ card, faceDown = false, small = false }: { card?: 
 
   return (
     <div
-      className={`${sizeClasses} flex flex-col items-center justify-center rounded-md border border-black/10 bg-white font-semibold shadow-sm ${
+      className={`${sizeClasses} animate-deal-in flex flex-col items-center justify-center rounded-md border border-black/10 bg-white font-semibold shadow-sm ${
         red ? 'text-red-600' : 'text-slate-900'
       }`}
     >

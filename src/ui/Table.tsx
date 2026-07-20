@@ -40,7 +40,22 @@ export function Table() {
     init();
   }, [init]);
 
+  // Deal the next hand with Enter at showdown (mirrors the "Next Hand" button).
+  useEffect(() => {
+    if (state.street !== 'PAYOUT' || outcome.over) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return;
+      const el = e.target as HTMLElement | null;
+      if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) return;
+      e.preventDefault();
+      newHand();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [state.street, outcome.over, newHand]);
+
   const n = state.seats.length;
+  const pot = state.seats.reduce((sum, s) => sum + s.committedTotal, 0);
 
   return (
     <div className="flex flex-col items-center justify-center bg-slate-950 p-4 text-slate-100">
@@ -55,10 +70,13 @@ export function Table() {
             ))}
           </div>
           <div data-testid="pot" className="rounded-full bg-black/30 px-3 py-1 text-sm font-medium">
-            Pot: {state.seats.reduce((sum, s) => sum + s.committedTotal, 0)}
+            Pot:{' '}
+            <span key={pot} className="inline-block animate-chip-bump font-semibold text-amber-200">
+              {pot}
+            </span>
           </div>
           {state.street === 'PAYOUT' && state.payout && (
-            <div className="mt-1 rounded-lg bg-black/50 px-3 py-1.5 text-center text-sm">
+            <div className="animate-win-pop mt-1 rounded-lg bg-black/50 px-3 py-1.5 text-center text-sm">
               {state.payout.winners.map((w) => (
                 <div key={w.seat}>
                   {w.seat === heroSeat ? 'You win' : `Seat ${w.seat} wins`} {w.amount}
@@ -102,9 +120,12 @@ export function Table() {
               <button
                 type="button"
                 onClick={newHand}
-                className="rounded-lg bg-amber-500 px-6 py-2.5 font-semibold text-slate-900 hover:bg-amber-400"
+                className="rounded-lg bg-amber-500 px-6 py-2.5 font-semibold text-slate-900 transition-transform hover:bg-amber-400 active:scale-95"
               >
                 Next Hand
+                <kbd aria-hidden="true" className="ml-2 rounded bg-black/15 px-1 text-[10px] font-normal">
+                  ↵
+                </kbd>
               </button>
             </div>
           )
@@ -128,7 +149,7 @@ export function Table() {
 function GameOverPanel({ outcome, onNewGame }: { outcome: MatchOutcome; onNewGame: () => void }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-6 py-5 text-center">
-      <div className={`text-2xl font-bold ${outcome.won ? 'text-emerald-400' : 'text-rose-400'}`}>
+      <div className={`animate-win-pop text-2xl font-bold ${outcome.won ? 'text-emerald-400' : 'text-rose-400'}`}>
         {outcome.won ? '🏆 You win!' : '💀 You busted'}
       </div>
       <p className="max-w-sm text-sm text-slate-300">

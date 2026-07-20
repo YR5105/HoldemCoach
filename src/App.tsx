@@ -32,7 +32,7 @@ function App() {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
+            className={`rounded-lg px-3 py-1.5 text-sm transition-colors active:scale-95 ${
               tab === t.id ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -41,7 +41,7 @@ function App() {
         ))}
       </nav>
 
-      <main className="flex-1">
+      <main key={tab} className="flex-1 animate-fade-in">
         {tab === 'table' && <Table />}
         {tab === 'review' && <ReviewScreen />}
         {tab === 'dashboard' && <DashboardScreen />}
