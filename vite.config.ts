@@ -5,6 +5,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // GitHub Pages serves the app from a repo subpath; the deploy workflow sets
+  // GITHUB_PAGES=true so asset URLs resolve. Dev and root-domain hosts stay at '/'.
+  base: process.env.GITHUB_PAGES === 'true' ? '/HoldemCoach/' : '/',
   plugins: [react(), tailwindcss()],
   test: {
     environment: 'node',
