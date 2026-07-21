@@ -1,6 +1,6 @@
 import { bucketMadeHand, plausiblePostflopActionsForCombo } from '../bots/botPolicy';
 import { personalityParams, type Personality } from './personalities';
-import { getLegalActions } from '../engine/actions';
+import { getLegalActions, type LegalActions } from '../engine/actions';
 import { orderedDeck } from '../engine/deck';
 import type { Action, ActionType, Card, GameState } from '../engine/types';
 import { simulateEquity } from '../equity/monteCarlo';
@@ -60,6 +60,20 @@ function heroInPosition(state: GameState, heroSeat: number): boolean {
     if (!seat.folded && !seat.sittingOut) return idx === heroSeat;
   }
   return false;
+}
+
+/**
+ * True when hero will see every remaining card with no further betting — i.e.
+ * calling puts hero all-in, or every live opponent is already all-in. Equity is
+ * *defined* as "the share you win if all-in" (GTO Wizard / Upswing), so in these
+ * spots hero realizes 100% of it and no realization discount applies.
+ */
+function equityFullyRealized(state: GameState, heroSeat: number, legal: LegalActions): boolean {
+  const hero = state.seats[heroSeat];
+  if (!hero) return false;
+  if (legal.callAmount > 0 && legal.callAmount >= hero.stack) return true; // calling is all-in
+  const liveOpponents = state.seats.filter((s) => s.seatIndex !== heroSeat && !s.folded);
+  return liveOpponents.length > 0 && liveOpponents.every((s) => s.allIn);
 }
 
 function realizationFactor(state: GameState, heroSeat: number): number {
@@ -309,10 +323,13 @@ const POSITION_NAMES: Record<string, string> = {
 
 const REASONS: Record<ReasonKey, { text: (ctx: ReasonCtx) => string; glossary: string }> = {
   pot_odds: {
-    text: ({ requiredPct, equityPct }) =>
-      equityPct >= requiredPct
+    // Wording is driven by the recommendation (pricedIn), never by a raw
+    // equity-vs-price comparison, so it can't say "good price" while advising a
+    // fold. requiredPct already reflects how much equity hero actually realizes.
+    text: ({ requiredPct, equityPct, pricedIn }) =>
+      pricedIn
         ? `The pot was offering a good price: you only needed to win about ${requiredPct}% of the time, and your hand wins about ${equityPct}%.`
-        : `The price was too high: you would need to win about ${requiredPct}% of the time to break even, but your hand only wins about ${equityPct}%.`,
+        : `The price was too high: your hand only wins about ${equityPct}% of the time, but you would need to win about ${requiredPct}% for a call to pay off.`,
     glossary: 'pot odds',
   },
   missed_value: {
@@ -356,6 +373,8 @@ interface ReasonCtx {
   chartSaysPlay: boolean;
   /** Preflop context: unopened pot, facing one raise, or facing a re-raise. */
   facing: 'open' | 'raise' | 'reraise';
+  /** True when the recommended action is to continue (call/check), not fold. */
+  pricedIn: boolean;
 }
 
 function pickReason(
@@ -486,7 +505,8 @@ export function gradeDecision(
 
   const legal = getLegalActions(state, heroSeat);
   const toCallBb = legal.callAmount / bigBlind;
-  const r = realizationFactor(state, heroSeat);
+  // All-in / no-further-betting spots realize full equity (no discount).
+  const r = equityFullyRealized(state, heroSeat, legal) ? 1.0 : realizationFactor(state, heroSeat);
   const equity = equityVs(ctx, villainCombosList, 'base');
   const heroBucket = heroBucketOf(equity, heroCards, [...state.board], evaluator);
   const inPosition = heroInPosition(state, heroSeat);
@@ -584,7 +604,13 @@ export function gradeDecision(
   if (!preflopChartDeviation && evLossBb < 0.1) severity = 'OK';
 
   const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition);
-  const requiredPct = Math.round((toCallBb / (ctx.potBb + toCallBb) || 0) * 100);
+  // Equity actually needed to make continuing break even, given how much of it
+  // hero will realize (R). All-in ⇒ R=1 ⇒ this is the raw pot-odds price; with
+  // more betting to come it's higher. Because the fold/call verdict uses this
+  // same R-discounted EV, keying the message off this number guarantees the
+  // "you needed X% · you have Y%" line never contradicts the recommendation.
+  const denom = r * (ctx.potBb + toCallBb);
+  const requiredPct = denom > 0 ? Math.min(99, Math.round((toCallBb / denom) * 100)) : 0;
   // How contested the pot already was when hero acted (preflop messages only).
   // Counts all prior preflop raises, mirroring preflopChartVerdict's branches.
   const priorRaises = state.actionLog.filter(
@@ -605,6 +631,9 @@ export function gradeDecision(
       // the correct "strong enough to play" wording (not "too weak, fold it").
       chartSaysPlay:
         displayBest.action === 'raise' || displayBest.action === 'bet' || displayBest.action === 'call',
+      // The coach recommends continuing (not folding) — drives the pot-odds
+      // wording so it always agrees with the verdict.
+      pricedIn: displayBest.action !== 'fold',
     },
     bigBlind,
   );
