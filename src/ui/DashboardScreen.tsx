@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { listGuesses, listHands, type GuessDoc, type HandDoc } from '../store/handHistory';
 import { computeStats, type Stats } from '../store/stats';
+import { AnimatedNumber } from './AnimatedNumber';
 
 // Dark-mode series hue from the validated reference palette (single series /
 // single measure -> one hue; severity colors stay reserved for severity chips).
@@ -45,15 +46,27 @@ export function DashboardScreen() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
       <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Hands played" value={String(stats.handsPlayed)} />
+        <StatTile label="Hands played" value={<AnimatedNumber value={stats.handsPlayed} animateOnMount />} />
         <StatTile
           label="EV loss / 100 hands"
-          value={`${stats.evLossPer100.toFixed(1)}bb`}
+          value={
+            <>
+              <AnimatedNumber value={stats.evLossPer100} decimals={1} animateOnMount />bb
+            </>
+          }
           hint="lower is better"
         />
         <StatTile
           label="Guess-first accuracy"
-          value={stats.guessMeanErrorPct !== null ? `±${stats.guessMeanErrorPct.toFixed(0)}%` : '—'}
+          value={
+            stats.guessMeanErrorPct !== null ? (
+              <>
+                ±<AnimatedNumber value={stats.guessMeanErrorPct} animateOnMount />%
+              </>
+            ) : (
+              '—'
+            )
+          }
           hint={stats.guessCount > 0 ? `${stats.guessCount} guesses` : 'no guesses yet'}
         />
       </div>
@@ -101,10 +114,10 @@ export function DashboardScreen() {
   );
 }
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatTile({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-center">
-      <div className="text-xl font-bold text-slate-100">{value}</div>
+      <div className="text-xl font-bold tabular-nums text-slate-100">{value}</div>
       <div className="mt-0.5 text-xs text-slate-400">{label}</div>
       {hint && <div className="text-[10px] text-slate-600">{hint}</div>}
     </div>

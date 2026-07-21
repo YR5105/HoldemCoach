@@ -1,5 +1,6 @@
 import type { Personality } from '../coach/personalities';
 import type { Seat as EngineSeat } from '../engine/types';
+import { AnimatedNumber } from './AnimatedNumber';
 import { PlayingCard } from './Card';
 
 /** Per-personality icon + accent for the seat badge (spec §9 "personality icon"). */
@@ -35,7 +36,12 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
       <div className="flex gap-1">
         {seat.holeCards ? (
           seat.holeCards.map((c, i) => (
-            <PlayingCard key={i} card={showFaceUp ? c : undefined} faceDown={!showFaceUp} small />
+            <PlayingCard
+              key={i}
+              card={showFaceUp ? c : undefined}
+              faceDown={!showFaceUp}
+              size={isHero ? 'lg' : 'sm'}
+            />
           ))
         ) : (
           <div className="h-10 w-7 sm:h-11 sm:w-8" />
@@ -65,7 +71,7 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
           <span className="font-semibold text-rose-400">OUT</span>
         ) : (
           <>
-            <span className="font-semibold">{seat.stack}</span>
+            <AnimatedNumber value={seat.stack} className="font-semibold tabular-nums" />
             {seat.allIn && <span className="ml-1 text-amber-400">ALL-IN</span>}
             {seat.folded && <span className="ml-1 text-slate-400">FOLDED</span>}
           </>
@@ -74,7 +80,7 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
 
       {seat.committedThisStreet > 0 && (
         <div className="rounded-full bg-slate-900/80 px-2 py-0.5 text-[11px] text-amber-300">
-          {seat.committedThisStreet}
+          <AnimatedNumber value={seat.committedThisStreet} className="tabular-nums" />
         </div>
       )}
     </div>

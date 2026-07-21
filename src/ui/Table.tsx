@@ -3,6 +3,7 @@ import { positionForSeat } from '../coach/position';
 import { computePotOdds, isGuessDue, matchOutcome, useGameStore, type MatchOutcome } from '../store/gameStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { ActionBar } from './ActionBar';
+import { AnimatedNumber } from './AnimatedNumber';
 import { PlayingCard } from './Card';
 import { FeedbackLayer, HandSummary } from './FeedbackLayer';
 import { GuessPrompt, GuessReveal } from './GuessPrompt';
@@ -63,17 +64,14 @@ export function Table() {
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
           <div className="flex gap-1.5">
             {state.board.map((c, i) => (
-              <PlayingCard key={i} card={c} />
+              <PlayingCard key={i} card={c} delayMs={(i % 3) * 70} />
             ))}
             {Array.from({ length: 5 - state.board.length }).map((_, i) => (
               <div key={`empty-${i}`} className="h-11 w-8 rounded-md border border-dashed border-white/20 sm:h-16 sm:w-12" />
             ))}
           </div>
           <div data-testid="pot" className="rounded-full bg-black/30 px-3 py-1 text-sm font-medium">
-            Pot:{' '}
-            <span key={pot} className="inline-block animate-chip-bump font-semibold text-amber-200">
-              {pot}
-            </span>
+            Pot: <AnimatedNumber value={pot} className="font-semibold tabular-nums text-amber-200" />
           </div>
           {state.street === 'PAYOUT' && state.payout && (
             <div className="animate-win-pop mt-1 rounded-lg bg-black/50 px-3 py-1.5 text-center text-sm">
