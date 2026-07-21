@@ -11,6 +11,7 @@ export type ReasonKey =
   | 'bet_sizing'
   | 'exploit_station'
   | 'exploit_nit'
+  | 'exploit_lag'
   | 'oop_discipline'
   | 'preflop_chart';
 

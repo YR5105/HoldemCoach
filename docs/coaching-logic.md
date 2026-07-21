@@ -226,6 +226,7 @@ Reason is chosen by `pickReason`:
 | `pot_control` | overbet/raised a MARGINAL hand when passive was best | big pots are for big hands; keep it small, win at showdown |
 | `exploit_station` | bluffed a lone Station when checking/calling was best | this opponent never folds — stop bluffing, value bet instead |
 | `exploit_nit` | called a lone Nit's aggression when folding was best | their aggression means strength — fold and save money |
+| `exploit_lag` | folded a marginal-or-better bluff-catcher the model wanted to call, vs a lone LAG | they bet/raise far too wide — a hand that beats bluffs should call |
 | `oop_discipline` | out of position with a marginal/weak hand | play tighter OOP |
 
 The `bet_sizing`/`missed_value` texture wording comes from a coarse
@@ -233,6 +234,12 @@ dry/wet classifier in `src/coach/boardTexture.ts` (suitedness + rank
 connectivity, paired boards discounted). It affects *wording only*, never the
 EV math. The exploit reasons fire only heads-up against that personality, so
 "this opponent" is unambiguous.
+
+**Multiway discipline** (≥2 live opponents): a fold-is-best `pot_odds` message
+appends "…several players still in, someone usually has a strong hand" when it
+fits the 260-char cap (skipped, never truncated, otherwise). And the coach never
+recommends bluffing into a crowd — a `missed_bluff` with AIR multiway falls back
+to `pot_odds` so the EV numbers carry the verdict instead of "you should bluff".
 
 **pot_odds wording is now verdict-driven** (fixed): it says "good price" only
 when the recommendation is to *continue*, and "the price was too high" only when

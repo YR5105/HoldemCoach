@@ -378,6 +378,11 @@ const REASONS: Record<ReasonKey, { text: (ctx: ReasonCtx) => string; glossary: s
       'This opponent plays very few hands and only puts chips in with real strength. When they show aggression, folding usually saves you money — even with a decent hand.',
     glossary: 'player types',
   },
+  exploit_lag: {
+    text: () =>
+      'This opponent bets and raises far more often than they have a strong hand. Against them, a decent hand that can beat bluffs is worth a call.',
+    glossary: 'player types',
+  },
   oop_discipline: {
     text: () => 'You act before your opponent on every betting round, which is a disadvantage — stick to stronger hands in spots like this.',
     glossary: 'position',
@@ -419,10 +424,12 @@ interface ReasonCtx {
   outs: number;
   /** Set when the action type was right but the size was off. */
   sizeDirection: 'bigger' | 'smaller' | null;
+  /** True when ≥2 live villains were in the pot at this decision. */
+  multiway: boolean;
 }
 
 /** Exploitable single-opponent profile the feedback may lean on. */
-type VillainType = 'STATION' | 'NIT' | null;
+type VillainType = 'STATION' | 'NIT' | 'LAG' | null;
 
 function pickReason(
   street: string,
@@ -431,8 +438,19 @@ function pickReason(
   heroBucket: HeroBucket,
   inPosition: boolean,
   villainType: VillainType,
+  multiway: boolean,
 ): ReasonKey {
   if (street === 'PREFLOP') return 'preflop_chart';
+  // Facing a lone loose-aggressive opponent's bet: their over-aggression means
+  // a decent made hand that beats bluffs should call, not fold (a hero call).
+  if (
+    villainType === 'LAG' &&
+    best.action === 'call' &&
+    chosen.action === 'fold' &&
+    (heroBucket === 'MONSTER' || heroBucket === 'STRONG' || heroBucket === 'MARGINAL')
+  ) {
+    return 'exploit_lag';
+  }
   if (best.action === 'fold') {
     // Heads-up vs an ultra-tight opponent, the read IS the reason: their
     // aggression means strength (exploitative play — "respect the nit").
@@ -451,6 +469,9 @@ function pickReason(
       if (heroBucket === 'MONSTER' || heroBucket === 'STRONG') return 'missed_value';
       // Draws bet as semi-bluffs: fold equity now, outs as the backup plan.
       if (heroBucket === 'DRAW') return 'semi_bluff';
+      // Never coach a bluff into a crowd — bluffing multiway is a leak. Let the
+      // EV numbers carry the verdict instead of "you should have bet".
+      if (multiway && heroBucket === 'AIR') return 'pot_odds';
       return 'missed_bluff';
     }
   }
@@ -523,9 +544,20 @@ function buildMessage(
   bigBlind: number,
 ): { message: string; glossary: string } {
   const reason = REASONS[reasonKey];
-  const message =
-    `${actionLabel(best, bigBlind)} was the better play. ${reason.text(reasonCtx)}` +
-    ` That cost you about ${evLossBb.toFixed(1)} big blinds.`;
+  let core = `${actionLabel(best, bigBlind)} was the better play. ${reason.text(reasonCtx)}`;
+  const suffix = ` That cost you about ${evLossBb.toFixed(1)} big blinds.`;
+  // Multiway discipline (R2): on a fold-is-best pot-odds spot with several
+  // players still in, teach that more opponents means stronger hands are
+  // needed — but only when the full message still fits the 260-char cap
+  // (skip the addendum rather than truncate or shorten the base sentence).
+  if (reasonKey === 'pot_odds' && reasonCtx.multiway && !reasonCtx.pricedIn) {
+    // Concise on purpose: the full "…you need more than heads-up" tail cannot
+    // coexist with the pot-odds base under the 260-char cap, and shortening the
+    // base is disallowed — so the addendum itself is trimmed to fit.
+    const addendum = ' With several players still in, someone usually has a strong hand.';
+    if ((core + addendum + suffix).length <= 260) core += addendum;
+  }
+  const message = core + suffix;
   return { message: message.slice(0, 260), glossary: reason.glossary };
 }
 
@@ -677,8 +709,13 @@ export function gradeDecision(
         ? 'STATION'
         : villainPersonalities[0] === 'Nit'
           ? 'NIT'
-          : null
+          : villainPersonalities[0] === 'LAG'
+            ? 'LAG'
+            : null
       : null;
+  // Two or more live opponents at this decision — drives multiway discipline
+  // wording and suppresses bluff coaching (bluffing multiway is a leak).
+  const multiway = villainSeats.length >= 2;
   const texture = classifyBoardTexture(state.board);
   // Outs only matter for semi-bluff wording; skip the 47-card scan otherwise.
   const outs = heroBucket === 'DRAW' ? countCleanOuts(heroCards, [...state.board], evaluator) : 0;
@@ -693,7 +730,7 @@ export function gradeDecision(
         : 'smaller'
       : null;
 
-  const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition, villainType);
+  const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition, villainType, multiway);
   // Equity actually needed to make continuing break even, given how much of it
   // hero will realize (R). All-in ⇒ R=1 ⇒ this is the raw pot-odds price; with
   // more betting to come it's higher. Because the fold/call verdict uses this
@@ -727,6 +764,7 @@ export function gradeDecision(
       texture,
       outs,
       sizeDirection,
+      multiway,
     },
     bigBlind,
   );

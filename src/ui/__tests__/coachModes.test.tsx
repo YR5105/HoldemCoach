@@ -123,4 +123,27 @@ describe('OK decisions', () => {
     expect(card.textContent).toContain('Good decision');
     expect(card.textContent).not.toContain('better play'); // no mistake message
   });
+
+  it('reinforces a well-played semi-bluff (drawing hand, chose to bet)', () => {
+    render(
+      <FeedbackCard
+        grade={mockGrade('OK', { heroBucket: 'DRAW', chosen: { action: 'bet', amount: 20, evBb: 1 } })}
+      />,
+    );
+    expect(screen.getByTestId('feedback-card').textContent).toContain('two ways to win');
+  });
+
+  it('reinforces value betting a strong hand', () => {
+    render(
+      <FeedbackCard
+        grade={mockGrade('OK', { heroBucket: 'STRONG', chosen: { action: 'bet', amount: 20, evBb: 1 } })}
+      />,
+    );
+    expect(screen.getByTestId('feedback-card').textContent).toContain('builds the pot');
+  });
+
+  it('reinforces a disciplined fold', () => {
+    render(<FeedbackCard grade={mockGrade('OK', { chosen: { action: 'fold', evBb: 0 } })} />);
+    expect(screen.getByTestId('feedback-card').textContent).toContain('saving chips');
+  });
 });

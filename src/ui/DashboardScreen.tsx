@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { DecisionCategory } from '../coach/graderTypes';
 import { listGuesses, listHands, type GuessDoc, type HandDoc } from '../store/handHistory';
 import { computeStats, type Stats } from '../store/stats';
 import { AnimatedNumber } from './AnimatedNumber';
@@ -15,6 +16,19 @@ const CATEGORY_LABEL: Record<string, string> = {
   facing_bet: 'Facing bets',
   bluff: 'Bluffing',
   sizing: 'Sizing',
+};
+
+/** One actionable, plain-English study tip per leak category (R3). */
+export const LEAK_TIPS: Record<DecisionCategory, string> = {
+  preflop:
+    'Stick to the starting-hand chart for your seat — discipline before the flop is the fastest way to stop losses.',
+  cbet:
+    'As the last raiser you can often keep betting: small on boards that miss everyone, bigger when many draws are possible.',
+  facing_bet:
+    'Compare the price against how often your hand wins — and fold when you are not getting it.',
+  sizing:
+    'Size bets by the board: small bets work on dry boards, big bets on coordinated ones.',
+  bluff: 'Bluff with hands that can still improve, and never bluff players who refuse to fold.',
 };
 
 export function DashboardScreen() {
@@ -86,6 +100,7 @@ export function DashboardScreen() {
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-200">EV lost by category</h2>
         <CategoryBars stats={stats} />
+        <WorstCategoryTip stats={stats} />
       </section>
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
@@ -186,6 +201,25 @@ function TrendChart({ windows }: { windows: Stats['windows'] }) {
         </g>
       )}
     </svg>
+  );
+}
+
+/** Actionable study tip for the single worst leak category (highest EV lost). */
+function WorstCategoryTip({ stats }: { stats: Stats }) {
+  const worst = [...stats.categories]
+    .filter((c) => c.evLoss > 0)
+    .sort((a, b) => b.evLoss - a.evLoss)[0];
+  if (!worst) return null;
+  return (
+    <p
+      data-testid="leak-tip"
+      className="mt-3 border-t border-slate-800 pt-3 text-xs text-slate-400"
+    >
+      <span className="font-semibold text-slate-300">
+        Work on {CATEGORY_LABEL[worst.category] ?? worst.category}:{' '}
+      </span>
+      {LEAK_TIPS[worst.category]}
+    </p>
   );
 }
 

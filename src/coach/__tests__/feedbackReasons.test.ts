@@ -184,6 +184,130 @@ describe('exploit reasons — single-villain personality reads', () => {
   });
 });
 
+describe('exploit_lag reason — hero-call vs a lone loose-aggressive opponent', () => {
+  // Pocket 7s on a dry K-Q-high river facing a bet: a marginal made hand the
+  // EV model wants to call because a lone LAG bets far too wide to fold to.
+  const lagFixture = {
+    street: 'RIVER' as const,
+    heroCards: ['7c', '7d'] as [Card, Card],
+    villainCards: ['Ac', 'Qd'] as [Card, Card],
+    board: ['Ks', 'Qd', '5c', '2h', '3d'] as Card[],
+    villainBet: 24,
+  };
+
+  it('folding a decent bluff-catcher the model wants to call gets the LAG read', () => {
+    const state = postflopState({ ...lagFixture, seed: 'reasons-lag' });
+    const grade = gradeDecision(state, 0, { seat: 0, type: 'fold' }, evaluator, undefined, { 1: 'LAG' });
+    expect(grade.best.action).toBe('call');
+    expect(['MARGINAL', 'STRONG', 'MONSTER']).toContain(grade.heroBucket);
+    expect(grade.reasonKey).toBe('exploit_lag');
+    expect(grade.glossary).toBe('player types');
+    expect(grade.message).toContain('bets and raises');
+  });
+
+  it('the same fold spot vs a default TAG keeps the pot_odds reason', () => {
+    const state = postflopState({ ...lagFixture, seed: 'reasons-lag-tag' });
+    const grade = gradeDecision(state, 0, { seat: 0, type: 'fold' }, evaluator);
+    expect(grade.reasonKey).toBe('pot_odds');
+  });
+});
+
+/**
+ * 3-handed postflop fixture: hero seat 0 (button), two live villains (seats 1
+ * and 2). Seat 1 may hold a live bet hero faces. Mirrors postflopState's shape.
+ */
+function multiwayState(opts: {
+  street: 'FLOP' | 'TURN' | 'RIVER';
+  heroCards: [Card, Card];
+  villain1: [Card, Card];
+  villain2: [Card, Card];
+  board: Card[];
+  committed?: number;
+  villainBet?: number;
+  seed?: string;
+}): GameState {
+  const committed = opts.committed ?? 20;
+  const bet = opts.villainBet ?? 0;
+  return {
+    seed: opts.seed ?? `multiway-${opts.street}-${opts.board.join('')}`,
+    config: { players: 3, blinds: [1, 2], startingStack: 200 },
+    street: opts.street,
+    seats: [
+      buildSeat(0, {
+        holeCards: opts.heroCards,
+        committedTotal: committed,
+        committedThisStreet: 0,
+        stack: 200 - committed,
+      }),
+      buildSeat(1, {
+        holeCards: opts.villain1,
+        committedTotal: committed + bet,
+        committedThisStreet: bet,
+        stack: 200 - committed - bet,
+        hasActed: true,
+      }),
+      buildSeat(2, {
+        holeCards: opts.villain2,
+        committedTotal: committed,
+        committedThisStreet: 0,
+        stack: 200 - committed,
+        hasActed: true,
+      }),
+    ],
+    board: opts.board,
+    deck: [],
+    currentBet: bet,
+    minRaise: Math.max(bet, 2),
+    actionOn: 0,
+    lastAggressor: bet > 0 ? 1 : null,
+    buttonSeat: 0,
+    actionLog:
+      bet > 0
+        ? [{ seat: 1, street: opts.street, action: 'bet', amount: bet }]
+        : [
+            { seat: 1, street: opts.street, action: 'check', amount: 0 },
+            { seat: 2, street: opts.street, action: 'check', amount: 0 },
+          ],
+    payout: null,
+    rngCounter: 0,
+  };
+}
+
+describe('multiway discipline wording', () => {
+  it('does not coach a bluff into multiple opponents', () => {
+    // Hero has air with two live opponents; betting is not best. The coach must
+    // never say "you should have bluffed" here — bluffing multiway is a leak.
+    const state = multiwayState({
+      street: 'RIVER',
+      heroCards: ['7h', '2d'],
+      villain1: ['Ac', 'Kd'],
+      villain2: ['Qc', 'Jd'],
+      board: ['As', 'Kd', '9c', '5h', '3d'],
+      seed: 'multiway-bluff',
+    });
+    const grade = gradeDecision(state, 0, { seat: 0, type: 'bet', amount: 20 }, evaluator);
+    expect(grade.reasonKey).not.toBe('missed_bluff');
+  });
+
+  it('a multiway fold-is-best spot mentions the extra players', () => {
+    const state = multiwayState({
+      street: 'RIVER',
+      heroCards: ['7h', '2d'],
+      villain1: ['Ac', 'Kd'],
+      villain2: ['Qc', 'Jd'],
+      board: ['As', 'Kd', '9c', '5h', '3d'],
+      villainBet: 24,
+      seed: 'multiway-fold',
+    });
+    const grade = gradeDecision(state, 0, { seat: 0, type: 'call' }, evaluator);
+    expect(grade.best.action).toBe('fold');
+    expect(grade.reasonKey).toBe('pot_odds');
+    expect(grade.message).toContain('several players');
+    expect(grade.message.length).toBeLessThanOrEqual(260);
+    expect(grade.message.endsWith('.')).toBe(true);
+  });
+});
+
 describe('missed_value texture note', () => {
   it('on a wet board, missed value mentions charging the draws', () => {
     // Hero flops the nut straight on a wet, two-tone board and checks.
