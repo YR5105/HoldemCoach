@@ -146,6 +146,35 @@ well-played semi-bluff or value bet it should reinforce *what* was good.
 **Acceptance criteria:**
 - Component test: OK grade with `heroBucket: 'DRAW'`, chosen bet → renders the two-ways-to-win copy.
 
+### R5 — Performance bar ("meter" feedback mode)
+
+**User story:** Written feedback after every decision bothers me. I want an
+ambient bar that rises when I play well and drops when I make mistakes —
+small dips for small mistakes, big drops for blunders — with the written
+explanation available only when I tap.
+
+**Spec — mechanics (decision quality only, never pot results):**
+- Bar value 0–100, session-scoped, starts at 75. Persist in `src/store/gameStore.ts` alongside the existing `feedback` array (the deltas derive from data already stored there — no grader changes).
+- On each graded decision:
+  - `severity === 'OK'` → `+2`, capped at 100.
+  - otherwise → `−min(20, round(evLossBb × 4))`, floored at 0.
+- Bar color by current value: ≥67 green, 34–66 amber, ≤33 red (reuse the severity color palette in `FeedbackCard.tsx`).
+- Resets when a new session starts; the per-session series feeds the dashboard later (out of scope now — just keep the value in the store).
+
+**Spec — UX:**
+- New `FeedbackMode` value `'meter'` in `src/store/settingsStore.ts` (additive; persisted store, so missing key must default safely for existing users).
+- Render in `src/ui/FeedbackLayer.tsx` where the subtle dot renders today: a slim horizontal bar (~120px) near the HUD, with the numeric value optional/hidden by default.
+- Keep the subtle severity dot next to the bar after each graded decision; clicking either the dot or the bar opens the existing `FeedbackCard` for the latest grade — the deep dive is always one tap away, never pushed.
+- On a `MISTAKE`/`BLUNDER` drop, animate the bar briefly (existing `animate-pop-in` pattern); no text appears.
+- No written feedback ever auto-opens in meter mode (including end of hand — `HandSummary` stays review-mode-only).
+- Onboarding defaults: `beginner` keeps `instant`; `casual`/`studied` may default to `meter` (change `completeOnboarding` in `settingsStore.ts`); Settings screen gets the fourth mode option in `src/ui/SettingsScreen.tsx`.
+
+**Acceptance criteria:**
+- Store unit test: sequence OK, OK, Inaccuracy(0.3bb), Blunder(6bb) from 75 → 75+2+2−1−20 = 58, and the bar never leaves [0, 100].
+- Component test (pattern: `coachModes.test.tsx`): in meter mode, no `FeedbackCard` renders automatically after a Blunder grade; clicking the bar renders it.
+- Component test: mode picker in Settings shows the meter option and persists it.
+- Existing instant/subtle/review behavior unchanged (current `coachModes` tests still green).
+
 ## 7. Phase 3 — Deferred (do not implement now; listed for roadmap)
 
 EV-model accuracy track, in priority order: texture-adjusted realization
