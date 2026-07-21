@@ -217,7 +217,7 @@ function FeedbackModeSwitcher() {
   return (
     <div className="mt-3 flex items-center gap-1 text-xs text-slate-500">
       <span className="mr-1">Coach:</span>
-      {(['instant', 'subtle', 'review'] as const).map((m) => (
+      {(['instant', 'subtle', 'review', 'meter'] as const).map((m) => (
         <button
           key={m}
           type="button"

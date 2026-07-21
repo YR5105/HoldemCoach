@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { GradeResult, Severity } from '../../coach/graderTypes';
 import { useGameStore } from '../../store/gameStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { FeedbackLayer, HandSummary } from '../FeedbackLayer';
 import { FeedbackCard, SEVERITY_COLOR } from '../FeedbackCard';
+import { SettingsScreen } from '../SettingsScreen';
 
 // A graded FLOP decision so the footer includes the hand-strength bucket.
 function mockGrade(severity: Severity, overrides: Partial<GradeResult> = {}): GradeResult {
@@ -87,6 +88,44 @@ describe('coach mode: review', () => {
     const card = screen.getByTestId('feedback-card');
     expect(card.textContent).toContain('Blunder');
     expect(card.textContent).toContain('better play');
+  });
+});
+
+describe('coach mode: meter', () => {
+  it('shows the performance bar but never auto-opens a card, even on a blunder', () => {
+    useSettingsStore.setState({ feedbackMode: 'meter' });
+    setFeedback([{ grade: mockGrade('BLUNDER') }]);
+
+    render(<FeedbackLayer />);
+
+    expect(screen.getByTestId('perf-meter')).toBeTruthy(); // ambient bar renders
+    expect(screen.queryByTestId('feedback-card')).toBeNull(); // no pushed card
+  });
+
+  it('opens the existing feedback card when the bar is tapped', async () => {
+    useSettingsStore.setState({ feedbackMode: 'meter' });
+    setFeedback([{ grade: mockGrade('BLUNDER') }]);
+
+    render(<FeedbackLayer />);
+    expect(screen.queryByTestId('feedback-card')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('perf-meter'));
+
+    const card = await screen.findByTestId('feedback-card');
+    expect(card.textContent).toContain('better play'); // the full grade message
+  });
+});
+
+describe('settings: feedback mode picker', () => {
+  it('offers the meter mode and persists the choice', () => {
+    useSettingsStore.setState({ feedbackMode: 'subtle' });
+
+    render(<SettingsScreen />);
+
+    const meterButton = screen.getByRole('button', { name: 'meter' });
+    fireEvent.click(meterButton);
+
+    expect(useSettingsStore.getState().feedbackMode).toBe('meter');
   });
 });
 

@@ -66,6 +66,22 @@ export function computePotOdds(state: GameState, heroSeat: number): PotOdds {
   return { toCall, pot, required };
 }
 
+/** Performance-meter starting value at the top of a session (spec §6 R5). */
+export const METER_START = 75;
+
+/**
+ * Next performance-meter value after one graded decision (spec §6 R5): reward a
+ * clean decision, punish by how many big blinds the mistake cost. Decision
+ * quality only — never pot results. Always clamped to [0, 100].
+ */
+export function meterAfter(
+  value: number,
+  grade: Pick<GradeResult, 'severity' | 'evLossBb'>,
+): number {
+  const delta = grade.severity === 'OK' ? 2 : -Math.min(20, Math.round(grade.evLossBb * 4));
+  return Math.max(0, Math.min(100, value + delta));
+}
+
 /** One graded hero decision within the current hand. */
 export interface FeedbackItem {
   grade: GradeResult;
@@ -105,6 +121,8 @@ interface GameStore {
   feedback: FeedbackItem[];
   /** Index into `feedback` of the card currently open (instant/subtle click), or null. */
   openFeedbackIndex: number | null;
+  /** Ambient performance meter (0–100), session-scoped (spec §6 R5). */
+  meter: number;
   /** Lifetime count of graded hero decisions (drives the every-25th guess prompt). */
   decisionCount: number;
   /** Result of the last submitted guess, shown after reveal. */
@@ -142,7 +160,10 @@ export const useGameStore = create<GameStore>((set, get) => {
     pendingGrades--;
     if (actionIndex === undefined) return;
     handAnnotations.set(actionIndex, toCoachAnnotation(grade));
-    set((prev) => ({ feedback: [...prev.feedback, { grade, actionIndex, seen: false }] }));
+    set((prev) => ({
+      feedback: [...prev.feedback, { grade, actionIndex, seen: false }],
+      meter: meterAfter(prev.meter, grade),
+    }));
     maybePersistHand();
   });
 
@@ -223,6 +244,8 @@ export const useGameStore = create<GameStore>((set, get) => {
     commitHand(state, 0, startStacks, {
       personalities: currentPersonalities(config.players),
       handNumber: 0,
+      // A brand-new match is a new session — the ambient meter starts over.
+      meter: METER_START,
     });
   }
 
@@ -243,6 +266,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     equity: null,
     feedback: [],
     openFeedbackIndex: null,
+    meter: METER_START,
     decisionCount: loadDecisionCount(),
     lastGuess: null,
     guessSatisfiedAt: null,
