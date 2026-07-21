@@ -1,4 +1,5 @@
 import { bucketMadeHand, plausiblePostflopActionsForCombo } from '../bots/botPolicy';
+import { classifyBoardTexture, type BoardTexture } from './boardTexture';
 import { personalityParams, type Personality } from './personalities';
 import { getLegalActions, type LegalActions } from '../engine/actions';
 import { orderedDeck } from '../engine/deck';
@@ -333,12 +334,49 @@ const REASONS: Record<ReasonKey, { text: (ctx: ReasonCtx) => string; glossary: s
     glossary: 'pot odds',
   },
   missed_value: {
-    text: () => 'Your hand is very strong — betting gets more chips into the pot while you are ahead.',
+    text: ({ texture }) =>
+      'Your hand is very strong — betting gets more chips into the pot while you are ahead.' +
+      (texture === 'WET' ? ' It also makes drawing hands pay to keep chasing.' : ''),
     glossary: 'value bet',
   },
   missed_bluff: {
     text: () => 'Your opponent is unlikely to have a strong hand here — a bet would often win the pot right away.',
     glossary: 'fold equity',
+  },
+  semi_bluff: {
+    text: ({ outs }) =>
+      outs > 0
+        ? `Betting a drawing hand gives you two ways to win: everyone may fold right away, and if they call, ${outs} different cards can still complete your draw.`
+        : 'Betting a drawing hand gives you two ways to win: everyone may fold right away, and if they call, you can still improve to the best hand.',
+    glossary: 'semi-bluff',
+  },
+  pot_control: {
+    text: () =>
+      'Your hand is decent but not strong enough to build a big pot — big pots are for big hands. Keeping the pot small lets your hand win at showdown without risking a lot.',
+    glossary: 'pot control',
+  },
+  bet_sizing: {
+    text: ({ sizeDirection, texture }) => {
+      if (sizeDirection === 'bigger') {
+        return texture === 'WET'
+          ? 'The cards on the table make many draws possible — a bigger bet makes opponents pay to chase them.'
+          : 'A bigger bet gets more chips in while you are in control of the hand.';
+      }
+      return texture === 'DRY'
+        ? 'These table cards rarely improve anyone — a smaller bet applies the same pressure while risking fewer chips.'
+        : 'A smaller bet was enough here — risking more does not buy you anything extra.';
+    },
+    glossary: 'bet sizing',
+  },
+  exploit_station: {
+    text: () =>
+      'This opponent calls with almost anything and rarely folds once they connect with the board. Bluffing them mostly burns chips — save your bets for hands that win when called.',
+    glossary: 'player types',
+  },
+  exploit_nit: {
+    text: () =>
+      'This opponent plays very few hands and only puts chips in with real strength. When they show aggression, folding usually saves you money — even with a decent hand.',
+    glossary: 'player types',
   },
   oop_discipline: {
     text: () => 'You act before your opponent on every betting round, which is a disadvantage — stick to stronger hands in spots like this.',
@@ -375,7 +413,16 @@ interface ReasonCtx {
   facing: 'open' | 'raise' | 'reraise';
   /** True when the recommended action is to continue (call/check), not fold. */
   pricedIn: boolean;
+  /** Coarse board texture (null preflop) — drives sizing/value wording. */
+  texture: BoardTexture | null;
+  /** Clean outs to a straight or better (0 outside DRAW spots). */
+  outs: number;
+  /** Set when the action type was right but the size was off. */
+  sizeDirection: 'bigger' | 'smaller' | null;
 }
+
+/** Exploitable single-opponent profile the feedback may lean on. */
+type VillainType = 'STATION' | 'NIT' | null;
 
 function pickReason(
   street: string,
@@ -383,22 +430,41 @@ function pickReason(
   chosen: ActionEV,
   heroBucket: HeroBucket,
   inPosition: boolean,
+  villainType: VillainType,
 ): ReasonKey {
   if (street === 'PREFLOP') return 'preflop_chart';
-  if (best.action === 'fold') return 'pot_odds';
+  if (best.action === 'fold') {
+    // Heads-up vs an ultra-tight opponent, the read IS the reason: their
+    // aggression means strength (exploitative play — "respect the nit").
+    return villainType === 'NIT' ? 'exploit_nit' : 'pot_odds';
+  }
   if (best.action === 'bet' || best.action === 'raise') {
-    // Covers both "should have bet/raised instead" and "right action, wrong
-    // size" — the dominant factor either way is the value (or fold equity)
-    // the chosen line leaves behind (spec §6.4 reason library).
     const sizeDiffers =
       chosen.action === best.action &&
       best.amount !== undefined &&
       chosen.amount !== undefined &&
       best.amount !== chosen.amount;
-    if (chosen.action !== best.action || sizeDiffers) {
+    // Right action, wrong size: teach sizing by board texture (small on dry,
+    // big on wet — the standard c-bet sizing rule from top training material).
+    if (sizeDiffers) return 'bet_sizing';
+    if (chosen.action !== best.action) {
       if (heroBucket === 'MONSTER' || heroBucket === 'STRONG') return 'missed_value';
+      // Draws bet as semi-bluffs: fold equity now, outs as the backup plan.
+      if (heroBucket === 'DRAW') return 'semi_bluff';
       return 'missed_bluff';
     }
+  }
+  // Hero got aggressive when the passive line was better.
+  const heroAggressive = chosen.action === 'bet' || chosen.action === 'raise';
+  if (heroAggressive && (best.action === 'check' || best.action === 'call')) {
+    // Bluffing a calling station is the classic exploitable leak — lead with
+    // the opponent read, not generic pot odds.
+    if (villainType === 'STATION' && (heroBucket === 'AIR' || heroBucket === 'DRAW')) {
+      return 'exploit_station';
+    }
+    // Medium-strength hands play best as pot-controlled bluff-catchers
+    // ("don't bloat the pot with medium hands").
+    if (heroBucket === 'MARGINAL') return 'pot_control';
   }
   if (!inPosition && (heroBucket === 'MARGINAL' || heroBucket === 'AIR')) return 'oop_discipline';
   return 'pot_odds';
@@ -603,7 +669,31 @@ export function gradeDecision(
   // except a clear preflop chart deviation, which was flagged deliberately above.
   if (!preflopChartDeviation && evLossBb < 0.1) severity = 'OK';
 
-  const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition);
+  // Single-villain exploitable profile: only lean on a read when there is
+  // exactly one live opponent, so "this opponent" is unambiguous.
+  const villainType: VillainType =
+    villainSeats.length === 1
+      ? villainPersonalities[0] === 'Station'
+        ? 'STATION'
+        : villainPersonalities[0] === 'Nit'
+          ? 'NIT'
+          : null
+      : null;
+  const texture = classifyBoardTexture(state.board);
+  // Outs only matter for semi-bluff wording; skip the 47-card scan otherwise.
+  const outs = heroBucket === 'DRAW' ? countCleanOuts(heroCards, [...state.board], evaluator) : 0;
+  const sizeDirection: 'bigger' | 'smaller' | null =
+    (displayBest.action === 'bet' || displayBest.action === 'raise') &&
+    chosen.action === displayBest.action &&
+    displayBest.amount !== undefined &&
+    chosen.amount !== undefined &&
+    displayBest.amount !== chosen.amount
+      ? displayBest.amount > chosen.amount
+        ? 'bigger'
+        : 'smaller'
+      : null;
+
+  const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition, villainType);
   // Equity actually needed to make continuing break even, given how much of it
   // hero will realize (R). All-in ⇒ R=1 ⇒ this is the raw pot-odds price; with
   // more betting to come it's higher. Because the fold/call verdict uses this
@@ -634,6 +724,9 @@ export function gradeDecision(
       // The coach recommends continuing (not folding) — drives the pot-odds
       // wording so it always agrees with the verdict.
       pricedIn: displayBest.action !== 'fold',
+      texture,
+      outs,
+      sizeDirection,
     },
     bigBlind,
   );

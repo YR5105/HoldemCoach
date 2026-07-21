@@ -6,6 +6,11 @@ export type ReasonKey =
   | 'pot_odds'
   | 'missed_value'
   | 'missed_bluff'
+  | 'semi_bluff'
+  | 'pot_control'
+  | 'bet_sizing'
+  | 'exploit_station'
+  | 'exploit_nit'
   | 'oop_discipline'
   | 'preflop_chart';
 

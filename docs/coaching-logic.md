@@ -219,9 +219,20 @@ Reason is chosen by `pickReason`:
 |-----------|------|------|
 | `preflop_chart` | any preflop grade | "strong/weak enough to play from {seat}" |
 | `pot_odds` | best is fold, or a call/check | price vs your win % |
-| `missed_value` | should have bet/raised a strong hand | get chips in while ahead |
-| `missed_bluff` | should have bet/raised a weak hand | fold out better hands |
+| `missed_value` | should have bet/raised a strong hand | get chips in while ahead; on wet boards adds "make draws pay" |
+| `missed_bluff` | should have bet/raised with air | fold out better hands |
+| `semi_bluff` | should have bet/raised a DRAW-bucket hand | two ways to win: folds now, or {outs} cards complete the draw |
+| `bet_sizing` | right action (bet/raise), wrong size | texture-aware: small does the job on dry boards; bet bigger on wet ones |
+| `pot_control` | overbet/raised a MARGINAL hand when passive was best | big pots are for big hands; keep it small, win at showdown |
+| `exploit_station` | bluffed a lone Station when checking/calling was best | this opponent never folds — stop bluffing, value bet instead |
+| `exploit_nit` | called a lone Nit's aggression when folding was best | their aggression means strength — fold and save money |
 | `oop_discipline` | out of position with a marginal/weak hand | play tighter OOP |
+
+The `bet_sizing`/`missed_value` texture wording comes from a coarse
+dry/wet classifier in `src/coach/boardTexture.ts` (suitedness + rank
+connectivity, paired boards discounted). It affects *wording only*, never the
+EV math. The exploit reasons fire only heads-up against that personality, so
+"this opponent" is unambiguous.
 
 **pot_odds wording is now verdict-driven** (fixed): it says "good price" only
 when the recommendation is to *continue*, and "the price was too high" only when
