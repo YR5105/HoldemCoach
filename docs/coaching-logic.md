@@ -79,8 +79,11 @@ truth). This is why equity numbers are consistent with how the bots behave.
 
 `simulateEquity` samples a combo for each villain from their reconstructed
 range, deals the remaining board, evaluates the showdown, and tallies hero's pot
-share (wins + split fractions). **1,000 iterations** in the app (seeded, so it's
-deterministic); ±~2%. Hand ranking uses `pokersolver`.
+share (wins + split fractions). Iterations are **pot-adaptive** (spec §6 R6a):
+`min(4000, max(1000, round(potBb × 20)))` — every pot ≤50bb keeps the historical
+**1,000** (seeded, deterministic; ±~2%), and bigger pots buy precision up to
+4,000 where equity noise turns into more big blinds of EV. Hand ranking uses
+`pokersolver`.
 
 Equity here is the classic **all-in equity**: "the share you win if all cards
 run out." How much of it you actually *keep* is handled separately by the
@@ -201,9 +204,18 @@ Default thresholds (configurable in Settings → Advanced):
 Extra rules:
 - **Mixed-strategy tolerance:** any action within **0.1bb** of the best is OK
   (so close spots aren't nagged) — *except* a clear preflop chart deviation.
+- **Noise-aware severity (postflop only, spec §6 R6a):** the tier is mapped off
+  `max(0, evLossBb − noiseMarginBb(potBb, iterations))`, where
+  `noiseMarginBb = k · potBb / √iterations` with **k = 1.0**. This subtracts a
+  Monte Carlo noise floor before choosing a severity so big pots can't
+  manufacture phantom Blunders from ±equity sampling wobble. The margin is
+  ~0.5bb in a 20bb pot (bites nothing) and ~3bb in a 200bb pot. The
+  **displayed cost stays the raw `evLossBb`** — only the tier uses the discount.
+  Preflop chart grading is deterministic and gets **no** margin.
 
-> **Comparison note:** these bb thresholds are absolute, not scaled to pot size
-> or stack depth. A 2bb error in a 5bb pot and in a 200bb pot grade the same.
+> **Comparison note:** the bb thresholds are absolute, not scaled to pot size or
+> stack depth — but the postflop noise margin above means a small EV error in a
+> very large pot is forgiven where the same error in a small pot is not.
 
 ---
 

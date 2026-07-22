@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { METER_START, meterAfter } from '../gameStore';
-import type { GradeResult } from '../../coach/graderTypes';
+import type { ActionEV, GradeResult } from '../../coach/graderTypes';
 
 /** Minimal grade stub — meterAfter only reads severity + evLossBb. */
 function g(severity: GradeResult['severity'], evLossBb: number): Pick<GradeResult, 'severity' | 'evLossBb'> {
   return { severity, evLossBb };
+}
+
+/** OK grade whose top-two candidate EVs differ by `gap` (drives the reward). */
+function okWithGap(gap: number): Pick<GradeResult, 'severity' | 'evLossBb' | 'candidates'> {
+  const candidates: ActionEV[] = [
+    { action: 'bet', evBb: gap },
+    { action: 'check', evBb: 0 },
+  ];
+  return { severity: 'OK', evLossBb: 0, candidates };
 }
 
 describe('performance meter (spec §6 R5)', () => {
@@ -36,5 +45,18 @@ describe('performance meter (spec §6 R5)', () => {
     // round(evLoss*4) can exceed 20; the drop is clamped there.
     expect(meterAfter(75, g('BLUNDER', 6))).toBe(55); // -20, not -24
     expect(meterAfter(75, g('MISTAKE', 1))).toBe(71); // -min(20, round(4)) = -4
+  });
+});
+
+describe('difficulty-weighted OK gains (spec §6 R6b)', () => {
+  it('rewards a correct choice more when the spot was harder', () => {
+    expect(meterAfter(50, okWithGap(4))).toBe(56); // gap >= 3 -> +6
+    expect(meterAfter(50, okWithGap(2))).toBe(54); // 1 <= gap < 3 -> +4
+    expect(meterAfter(50, okWithGap(0.5))).toBe(52); // gap < 1 -> +2
+  });
+
+  it('treats a grade with fewer than two candidates as an easy +2', () => {
+    expect(meterAfter(50, g('OK', 0))).toBe(52);
+    expect(meterAfter(50, { severity: 'OK', evLossBb: 0, candidates: [{ action: 'fold', evBb: 0 }] })).toBe(52);
   });
 });

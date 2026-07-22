@@ -33,7 +33,39 @@ import {
   type Severity,
 } from './graderTypes';
 
-const MC_ITERATIONS = 1000;
+const MC_ITERATIONS_MIN = 1000;
+const MC_ITERATIONS_MAX = 4000;
+
+/**
+ * Monte Carlo run-outs, scaled to the pot (spec §6 R6a). Bigger pots turn each
+ * ±equity wobble into more big blinds of EV noise, so we buy precision where it
+ * matters — 20 iterations per bb of pot, clamped to [1000, 4000]. Pots ≤50bb
+ * keep the historical 1000 (every existing fixture is ≤20bb, so their numbers
+ * are byte-for-byte unchanged); a 200bb pot gets the full 4000.
+ */
+function iterationsForPot(potBb: number): number {
+  return Math.min(MC_ITERATIONS_MAX, Math.max(MC_ITERATIONS_MIN, Math.round(potBb * 20)));
+}
+
+/**
+ * Big-blind noise floor subtracted from EV loss before mapping severity
+ * (spec §6 R6a). A Monte Carlo equity estimate is a Bernoulli mean with
+ * σ_equity = 0.5/√N (worst case p≈0.5). `evLossBb` is the gap between two
+ * INDEPENDENTLY-seeded estimates, each multiplied by the pot to become bb, so
+ * its noise is ≈ k · potBb / √N. With k = 1.0 this is ~1.4σ of a single
+ * estimate's pot-scaled error — enough to absorb phantom Blunders manufactured
+ * by sampling noise in big pots without touching honest ones.
+ *
+ * Calibration (k = 1.0): margin is 0.47bb in a 15bb pot and 0.63bb in a 20bb
+ * pot — far below those fixtures' 4.95bb / 18.5bb losses, so grader.test.ts,
+ * graderAccuracy.test.ts and graderSanity.test.ts all pass unchanged — yet
+ * reaches ~3.2bb in a 200bb pot (4000 iterations), where a 2bb "Blunder" is
+ * genuinely inside the noise band.
+ */
+const NOISE_MARGIN_K = 1.0;
+export function noiseMarginBb(potBb: number, iterations: number): number {
+  return (NOISE_MARGIN_K / Math.sqrt(iterations)) * potBb;
+}
 
 interface GraderContext {
   state: GameState;
@@ -45,6 +77,8 @@ interface GraderContext {
   heroCards: [Card, Card];
   potBb: number;
   bigBlind: number;
+  /** Pot-adaptive Monte Carlo iterations for every equity estimate this grade. */
+  iterations: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +171,7 @@ function equityVs(ctx: GraderContext, villainCombosList: [Card, Card][][], seedS
       heroCards: ctx.heroCards,
       board: [...ctx.state.board],
       villainCombos: villainCombosList,
-      iterations: MC_ITERATIONS,
+      iterations: ctx.iterations,
       seed: `${ctx.state.seed}:grade:${ctx.state.actionLog.length}:${seedSuffix}`,
     },
     ctx.evaluator,
@@ -590,6 +624,7 @@ export function gradeDecision(
   );
 
   const potChips = state.seats.reduce((sum, s) => sum + s.committedTotal, 0);
+  const potBb = potChips / bigBlind;
   const ctx: GraderContext = {
     state,
     heroSeat,
@@ -597,8 +632,9 @@ export function gradeDecision(
     villainCombosList,
     villainPersonalities,
     heroCards,
-    potBb: potChips / bigBlind,
+    potBb,
     bigBlind,
+    iterations: iterationsForPot(potBb),
   };
 
   const legal = getLegalActions(state, heroSeat);
@@ -640,7 +676,12 @@ export function gradeDecision(
     })();
 
   let evLossBb = Math.max(0, best.evBb - chosen.evBb);
-  let severity: Severity = severityForEvLoss(evLossBb, thresholds);
+  // Postflop severity maps off a noise-discounted loss so Monte Carlo wobble in
+  // big pots can't manufacture phantom Blunders (spec §6 R6a). Preflop grading
+  // is deterministic (chart-driven) — no margin there. The DISPLAYED cost stays
+  // the raw evLossBb; only the severity tier uses the discounted value.
+  const noiseMargin = state.street === 'PREFLOP' ? 0 : noiseMarginBb(ctx.potBb, ctx.iterations);
+  let severity: Severity = severityForEvLoss(Math.max(0, evLossBb - noiseMargin), thresholds);
   let displayBest = best;
   // Set when hero clearly deviated from the preflop chart (not merely one step
   // off a boundary). Such deviations must never be downgraded back to OK by the

@@ -70,16 +70,37 @@ export function computePotOdds(state: GameState, heroSeat: number): PotOdds {
 export const METER_START = 75;
 
 /**
- * Next performance-meter value after one graded decision (spec §6 R5): reward a
- * clean decision, punish by how many big blinds the mistake cost. Decision
- * quality only — never pot results. Always clamped to [0, 100].
+ * OK reward, weighted by how hard the decision was (spec §6 R6b): the gap
+ * between the best and second-best candidate EV. A forced/obvious correct play
+ * earns little; nailing a genuinely close spot earns more.
  */
-export function meterAfter(
-  value: number,
-  grade: Pick<GradeResult, 'severity' | 'evLossBb'>,
-): number {
-  const delta = grade.severity === 'OK' ? 2 : -Math.min(20, Math.round(grade.evLossBb * 4));
-  return Math.max(0, Math.min(100, value + delta));
+function okReward(gap: number): number {
+  if (gap >= 3) return 6;
+  if (gap >= 1) return 4;
+  return 2;
+}
+
+/**
+ * Meter delta for one graded decision (spec §6 R5/R6b): reward a clean decision
+ * — more when the spot was hard — and punish by how many big blinds the mistake
+ * cost. Decision quality only, never pot results.
+ */
+type MeterGrade = Pick<GradeResult, 'severity' | 'evLossBb'> & {
+  candidates?: GradeResult['candidates'];
+};
+
+export function meterDelta(grade: MeterGrade): number {
+  if (grade.severity === 'OK') {
+    const cands = grade.candidates ?? [];
+    const gap = cands.length >= 2 ? cands[0]!.evBb - cands[1]!.evBb : 0;
+    return okReward(gap);
+  }
+  return -Math.min(20, Math.round(grade.evLossBb * 4));
+}
+
+/** Applies one graded decision's delta to the meter, clamped to [0, 100]. */
+export function meterAfter(value: number, grade: MeterGrade): number {
+  return Math.max(0, Math.min(100, value + meterDelta(grade)));
 }
 
 /** One graded hero decision within the current hand. */
@@ -123,6 +144,8 @@ interface GameStore {
   openFeedbackIndex: number | null;
   /** Ambient performance meter (0–100), session-scoped (spec §6 R5). */
   meter: number;
+  /** Last meter change (signed), for the floating +/- indicator (spec §6 R6b). */
+  meterDelta: number;
   /** Lifetime count of graded hero decisions (drives the every-25th guess prompt). */
   decisionCount: number;
   /** Result of the last submitted guess, shown after reveal. */
@@ -160,10 +183,14 @@ export const useGameStore = create<GameStore>((set, get) => {
     pendingGrades--;
     if (actionIndex === undefined) return;
     handAnnotations.set(actionIndex, toCoachAnnotation(grade));
-    set((prev) => ({
-      feedback: [...prev.feedback, { grade, actionIndex, seen: false }],
-      meter: meterAfter(prev.meter, grade),
-    }));
+    set((prev) => {
+      const meter = meterAfter(prev.meter, grade);
+      return {
+        feedback: [...prev.feedback, { grade, actionIndex, seen: false }],
+        meter,
+        meterDelta: meter - prev.meter,
+      };
+    });
     maybePersistHand();
   });
 
@@ -246,6 +273,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       handNumber: 0,
       // A brand-new match is a new session — the ambient meter starts over.
       meter: METER_START,
+      meterDelta: 0,
     });
   }
 
@@ -267,6 +295,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     feedback: [],
     openFeedbackIndex: null,
     meter: METER_START,
+    meterDelta: 0,
     decisionCount: loadDecisionCount(),
     lastGuess: null,
     guessSatisfiedAt: null,

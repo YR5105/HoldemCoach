@@ -116,6 +116,60 @@ describe('coach mode: meter', () => {
   });
 });
 
+describe('coach mode: meter — "Won, but…" nudge (spec §6 R6b)', () => {
+  function setPayout(opts: { heroWon: boolean; severity: Severity }) {
+    useGameStore.setState((prev) => ({
+      // Merge onto the real initial state so other fields (config, seats) survive.
+      state: {
+        ...prev.state,
+        street: 'PAYOUT',
+        payout: { pots: [], winners: opts.heroWon ? [{ seat: 0, amount: 100 }] : [{ seat: 1, amount: 100 }] },
+      },
+      heroSeat: 0,
+      feedback: [{ grade: mockGrade(opts.severity), actionIndex: 0, seen: false }],
+      openFeedbackIndex: null,
+    }));
+  }
+
+  it('nudges when hero won a pot that contained a blunder', () => {
+    useSettingsStore.setState({ feedbackMode: 'meter' });
+    setPayout({ heroWon: true, severity: 'BLUNDER' });
+
+    render(<FeedbackLayer />);
+
+    expect(screen.getByTestId('won-but-nudge')).toBeTruthy();
+    // It must never auto-open the deep-dive card.
+    expect(screen.queryByTestId('feedback-card')).toBeNull();
+  });
+
+  it('stays silent when hero lost the hand', () => {
+    useSettingsStore.setState({ feedbackMode: 'meter' });
+    setPayout({ heroWon: false, severity: 'BLUNDER' });
+
+    render(<FeedbackLayer />);
+
+    expect(screen.queryByTestId('won-but-nudge')).toBeNull();
+  });
+
+  it('stays silent when every decision this hand was clean', () => {
+    useSettingsStore.setState({ feedbackMode: 'meter' });
+    setPayout({ heroWon: true, severity: 'INACCURACY' }); // not a MISTAKE/BLUNDER
+
+    render(<FeedbackLayer />);
+
+    expect(screen.queryByTestId('won-but-nudge')).toBeNull();
+  });
+
+  it('does not appear outside meter mode', () => {
+    useSettingsStore.setState({ feedbackMode: 'subtle' });
+    setPayout({ heroWon: true, severity: 'BLUNDER' });
+
+    render(<FeedbackLayer />);
+
+    expect(screen.queryByTestId('won-but-nudge')).toBeNull();
+  });
+});
+
 describe('settings: feedback mode picker', () => {
   it('offers the meter mode and persists the choice', () => {
     useSettingsStore.setState({ feedbackMode: 'subtle' });
