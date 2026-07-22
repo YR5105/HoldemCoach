@@ -1,6 +1,7 @@
 import { bucketMadeHand, plausiblePostflopActionsForCombo } from '../bots/botPolicy';
+import { classifyBoardTexture, type BoardTexture } from './boardTexture';
 import { personalityParams, type Personality } from './personalities';
-import { getLegalActions } from '../engine/actions';
+import { getLegalActions, type LegalActions } from '../engine/actions';
 import { orderedDeck } from '../engine/deck';
 import type { Action, ActionType, Card, GameState } from '../engine/types';
 import { simulateEquity } from '../equity/monteCarlo';
@@ -32,7 +33,39 @@ import {
   type Severity,
 } from './graderTypes';
 
-const MC_ITERATIONS = 1000;
+const MC_ITERATIONS_MIN = 1000;
+const MC_ITERATIONS_MAX = 4000;
+
+/**
+ * Monte Carlo run-outs, scaled to the pot (spec §6 R6a). Bigger pots turn each
+ * ±equity wobble into more big blinds of EV noise, so we buy precision where it
+ * matters — 20 iterations per bb of pot, clamped to [1000, 4000]. Pots ≤50bb
+ * keep the historical 1000 (every existing fixture is ≤20bb, so their numbers
+ * are byte-for-byte unchanged); a 200bb pot gets the full 4000.
+ */
+function iterationsForPot(potBb: number): number {
+  return Math.min(MC_ITERATIONS_MAX, Math.max(MC_ITERATIONS_MIN, Math.round(potBb * 20)));
+}
+
+/**
+ * Big-blind noise floor subtracted from EV loss before mapping severity
+ * (spec §6 R6a). A Monte Carlo equity estimate is a Bernoulli mean with
+ * σ_equity = 0.5/√N (worst case p≈0.5). `evLossBb` is the gap between two
+ * INDEPENDENTLY-seeded estimates, each multiplied by the pot to become bb, so
+ * its noise is ≈ k · potBb / √N. With k = 1.0 this is ~1.4σ of a single
+ * estimate's pot-scaled error — enough to absorb phantom Blunders manufactured
+ * by sampling noise in big pots without touching honest ones.
+ *
+ * Calibration (k = 1.0): margin is 0.47bb in a 15bb pot and 0.63bb in a 20bb
+ * pot — far below those fixtures' 4.95bb / 18.5bb losses, so grader.test.ts,
+ * graderAccuracy.test.ts and graderSanity.test.ts all pass unchanged — yet
+ * reaches ~3.2bb in a 200bb pot (4000 iterations), where a 2bb "Blunder" is
+ * genuinely inside the noise band.
+ */
+const NOISE_MARGIN_K = 1.0;
+export function noiseMarginBb(potBb: number, iterations: number): number {
+  return (NOISE_MARGIN_K / Math.sqrt(iterations)) * potBb;
+}
 
 interface GraderContext {
   state: GameState;
@@ -44,6 +77,8 @@ interface GraderContext {
   heroCards: [Card, Card];
   potBb: number;
   bigBlind: number;
+  /** Pot-adaptive Monte Carlo iterations for every equity estimate this grade. */
+  iterations: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +95,20 @@ function heroInPosition(state: GameState, heroSeat: number): boolean {
     if (!seat.folded && !seat.sittingOut) return idx === heroSeat;
   }
   return false;
+}
+
+/**
+ * True when hero will see every remaining card with no further betting — i.e.
+ * calling puts hero all-in, or every live opponent is already all-in. Equity is
+ * *defined* as "the share you win if all-in" (GTO Wizard / Upswing), so in these
+ * spots hero realizes 100% of it and no realization discount applies.
+ */
+function equityFullyRealized(state: GameState, heroSeat: number, legal: LegalActions): boolean {
+  const hero = state.seats[heroSeat];
+  if (!hero) return false;
+  if (legal.callAmount > 0 && legal.callAmount >= hero.stack) return true; // calling is all-in
+  const liveOpponents = state.seats.filter((s) => s.seatIndex !== heroSeat && !s.folded);
+  return liveOpponents.length > 0 && liveOpponents.every((s) => s.allIn);
 }
 
 function realizationFactor(state: GameState, heroSeat: number): number {
@@ -122,7 +171,7 @@ function equityVs(ctx: GraderContext, villainCombosList: [Card, Card][][], seedS
       heroCards: ctx.heroCards,
       board: [...ctx.state.board],
       villainCombos: villainCombosList,
-      iterations: MC_ITERATIONS,
+      iterations: ctx.iterations,
       seed: `${ctx.state.seed}:grade:${ctx.state.actionLog.length}:${seedSuffix}`,
     },
     ctx.evaluator,
@@ -309,29 +358,86 @@ const POSITION_NAMES: Record<string, string> = {
 
 const REASONS: Record<ReasonKey, { text: (ctx: ReasonCtx) => string; glossary: string }> = {
   pot_odds: {
-    text: ({ requiredPct, equityPct }) =>
-      equityPct >= requiredPct
+    // Wording is driven by the recommendation (pricedIn), never by a raw
+    // equity-vs-price comparison, so it can't say "good price" while advising a
+    // fold. requiredPct already reflects how much equity hero actually realizes.
+    text: ({ requiredPct, equityPct, pricedIn }) =>
+      pricedIn
         ? `The pot was offering a good price: you only needed to win about ${requiredPct}% of the time, and your hand wins about ${equityPct}%.`
-        : `The price was too high: you would need to win about ${requiredPct}% of the time to break even, but your hand only wins about ${equityPct}%.`,
+        : `The price was too high: your hand only wins about ${equityPct}% of the time, but you would need to win about ${requiredPct}% for a call to pay off.`,
     glossary: 'pot odds',
   },
   missed_value: {
-    text: () => 'Your hand is very strong — betting gets more chips into the pot while you are ahead.',
+    text: ({ texture }) =>
+      'Your hand is very strong — betting gets more chips into the pot while you are ahead.' +
+      (texture === 'WET' ? ' It also makes drawing hands pay to keep chasing.' : ''),
     glossary: 'value bet',
   },
   missed_bluff: {
     text: () => 'Your opponent is unlikely to have a strong hand here — a bet would often win the pot right away.',
     glossary: 'fold equity',
   },
+  semi_bluff: {
+    text: ({ outs }) =>
+      outs > 0
+        ? `Betting a drawing hand gives you two ways to win: everyone may fold right away, and if they call, ${outs} different cards can still complete your draw.`
+        : 'Betting a drawing hand gives you two ways to win: everyone may fold right away, and if they call, you can still improve to the best hand.',
+    glossary: 'semi-bluff',
+  },
+  pot_control: {
+    text: () =>
+      'Your hand is decent but not strong enough to build a big pot — big pots are for big hands. Keeping the pot small lets your hand win at showdown without risking a lot.',
+    glossary: 'pot control',
+  },
+  bet_sizing: {
+    text: ({ sizeDirection, texture }) => {
+      if (sizeDirection === 'bigger') {
+        return texture === 'WET'
+          ? 'The cards on the table make many draws possible — a bigger bet makes opponents pay to chase them.'
+          : 'A bigger bet gets more chips in while you are in control of the hand.';
+      }
+      return texture === 'DRY'
+        ? 'These table cards rarely improve anyone — a smaller bet applies the same pressure while risking fewer chips.'
+        : 'A smaller bet was enough here — risking more does not buy you anything extra.';
+    },
+    glossary: 'bet sizing',
+  },
+  exploit_station: {
+    text: () =>
+      'This opponent calls with almost anything and rarely folds once they connect with the board. Bluffing them mostly burns chips — save your bets for hands that win when called.',
+    glossary: 'player types',
+  },
+  exploit_nit: {
+    text: () =>
+      'This opponent plays very few hands and only puts chips in with real strength. When they show aggression, folding usually saves you money — even with a decent hand.',
+    glossary: 'player types',
+  },
+  exploit_lag: {
+    text: () =>
+      'This opponent bets and raises far more often than they have a strong hand. Against them, a decent hand that can beat bluffs is worth a call.',
+    glossary: 'player types',
+  },
   oop_discipline: {
     text: () => 'You act before your opponent on every betting round, which is a disadvantage — stick to stronger hands in spots like this.',
     glossary: 'position',
   },
   preflop_chart: {
-    text: ({ position, chartSaysPlay }) =>
-      chartSaysPlay
-        ? `This hand is strong enough to play from ${POSITION_NAMES[position] ?? position} — solid players get involved here.`
-        : `This hand is too weak to play from ${POSITION_NAMES[position] ?? position} — solid players fold it here.`,
+    text: ({ position, chartSaysPlay, facing }) => {
+      const seat = POSITION_NAMES[position] ?? position;
+      if (facing === 'open') {
+        return chartSaysPlay
+          ? `This hand is strong enough to raise from ${seat} — solid players get involved here.`
+          : `This hand is too weak to play from ${seat} — solid players fold it here.`;
+      }
+      if (facing === 'raise') {
+        return chartSaysPlay
+          ? `This hand is strong enough to continue even against the raise in front of you.`
+          : `An opponent had already raised, and it takes a much stronger hand to call or re-raise than to make the first raise — solid players fold this hand here.`;
+      }
+      return chartSaysPlay
+        ? `This hand is strong enough to continue even against a raise and a re-raise.`
+        : `There was already a raise and a re-raise in front of you — that usually means very strong hands, so almost everything should fold here.`;
+    },
     glossary: 'opening range',
   },
 };
@@ -342,7 +448,22 @@ interface ReasonCtx {
   position: string;
   /** True when the chart wanted hero to enter the pot and hero passed. */
   chartSaysPlay: boolean;
+  /** Preflop context: unopened pot, facing one raise, or facing a re-raise. */
+  facing: 'open' | 'raise' | 'reraise';
+  /** True when the recommended action is to continue (call/check), not fold. */
+  pricedIn: boolean;
+  /** Coarse board texture (null preflop) — drives sizing/value wording. */
+  texture: BoardTexture | null;
+  /** Clean outs to a straight or better (0 outside DRAW spots). */
+  outs: number;
+  /** Set when the action type was right but the size was off. */
+  sizeDirection: 'bigger' | 'smaller' | null;
+  /** True when ≥2 live villains were in the pot at this decision. */
+  multiway: boolean;
 }
+
+/** Exploitable single-opponent profile the feedback may lean on. */
+type VillainType = 'STATION' | 'NIT' | 'LAG' | null;
 
 function pickReason(
   street: string,
@@ -350,22 +471,55 @@ function pickReason(
   chosen: ActionEV,
   heroBucket: HeroBucket,
   inPosition: boolean,
+  villainType: VillainType,
+  multiway: boolean,
 ): ReasonKey {
   if (street === 'PREFLOP') return 'preflop_chart';
-  if (best.action === 'fold') return 'pot_odds';
+  // Facing a lone loose-aggressive opponent's bet: their over-aggression means
+  // a decent made hand that beats bluffs should call, not fold (a hero call).
+  if (
+    villainType === 'LAG' &&
+    best.action === 'call' &&
+    chosen.action === 'fold' &&
+    (heroBucket === 'MONSTER' || heroBucket === 'STRONG' || heroBucket === 'MARGINAL')
+  ) {
+    return 'exploit_lag';
+  }
+  if (best.action === 'fold') {
+    // Heads-up vs an ultra-tight opponent, the read IS the reason: their
+    // aggression means strength (exploitative play — "respect the nit").
+    return villainType === 'NIT' ? 'exploit_nit' : 'pot_odds';
+  }
   if (best.action === 'bet' || best.action === 'raise') {
-    // Covers both "should have bet/raised instead" and "right action, wrong
-    // size" — the dominant factor either way is the value (or fold equity)
-    // the chosen line leaves behind (spec §6.4 reason library).
     const sizeDiffers =
       chosen.action === best.action &&
       best.amount !== undefined &&
       chosen.amount !== undefined &&
       best.amount !== chosen.amount;
-    if (chosen.action !== best.action || sizeDiffers) {
+    // Right action, wrong size: teach sizing by board texture (small on dry,
+    // big on wet — the standard c-bet sizing rule from top training material).
+    if (sizeDiffers) return 'bet_sizing';
+    if (chosen.action !== best.action) {
       if (heroBucket === 'MONSTER' || heroBucket === 'STRONG') return 'missed_value';
+      // Draws bet as semi-bluffs: fold equity now, outs as the backup plan.
+      if (heroBucket === 'DRAW') return 'semi_bluff';
+      // Never coach a bluff into a crowd — bluffing multiway is a leak. Let the
+      // EV numbers carry the verdict instead of "you should have bet".
+      if (multiway && heroBucket === 'AIR') return 'pot_odds';
       return 'missed_bluff';
     }
+  }
+  // Hero got aggressive when the passive line was better.
+  const heroAggressive = chosen.action === 'bet' || chosen.action === 'raise';
+  if (heroAggressive && (best.action === 'check' || best.action === 'call')) {
+    // Bluffing a calling station is the classic exploitable leak — lead with
+    // the opponent read, not generic pot odds.
+    if (villainType === 'STATION' && (heroBucket === 'AIR' || heroBucket === 'DRAW')) {
+      return 'exploit_station';
+    }
+    // Medium-strength hands play best as pot-controlled bluff-catchers
+    // ("don't bloat the pot with medium hands").
+    if (heroBucket === 'MARGINAL') return 'pot_control';
   }
   if (!inPosition && (heroBucket === 'MARGINAL' || heroBucket === 'AIR')) return 'oop_discipline';
   return 'pot_odds';
@@ -424,9 +578,20 @@ function buildMessage(
   bigBlind: number,
 ): { message: string; glossary: string } {
   const reason = REASONS[reasonKey];
-  const message =
-    `${actionLabel(best, bigBlind)} was the better play. ${reason.text(reasonCtx)}` +
-    ` That cost you about ${evLossBb.toFixed(1)} big blinds.`;
+  let core = `${actionLabel(best, bigBlind)} was the better play. ${reason.text(reasonCtx)}`;
+  const suffix = ` That cost you about ${evLossBb.toFixed(1)} big blinds.`;
+  // Multiway discipline (R2): on a fold-is-best pot-odds spot with several
+  // players still in, teach that more opponents means stronger hands are
+  // needed — but only when the full message still fits the 260-char cap
+  // (skip the addendum rather than truncate or shorten the base sentence).
+  if (reasonKey === 'pot_odds' && reasonCtx.multiway && !reasonCtx.pricedIn) {
+    // Concise on purpose: the full "…you need more than heads-up" tail cannot
+    // coexist with the pot-odds base under the 260-char cap, and shortening the
+    // base is disallowed — so the addendum itself is trimmed to fit.
+    const addendum = ' With several players still in, someone usually has a strong hand.';
+    if ((core + addendum + suffix).length <= 260) core += addendum;
+  }
+  const message = core + suffix;
   return { message: message.slice(0, 260), glossary: reason.glossary };
 }
 
@@ -459,6 +624,7 @@ export function gradeDecision(
   );
 
   const potChips = state.seats.reduce((sum, s) => sum + s.committedTotal, 0);
+  const potBb = potChips / bigBlind;
   const ctx: GraderContext = {
     state,
     heroSeat,
@@ -466,13 +632,15 @@ export function gradeDecision(
     villainCombosList,
     villainPersonalities,
     heroCards,
-    potBb: potChips / bigBlind,
+    potBb,
     bigBlind,
+    iterations: iterationsForPot(potBb),
   };
 
   const legal = getLegalActions(state, heroSeat);
   const toCallBb = legal.callAmount / bigBlind;
-  const r = realizationFactor(state, heroSeat);
+  // All-in / no-further-betting spots realize full equity (no discount).
+  const r = equityFullyRealized(state, heroSeat, legal) ? 1.0 : realizationFactor(state, heroSeat);
   const equity = equityVs(ctx, villainCombosList, 'base');
   const heroBucket = heroBucketOf(equity, heroCards, [...state.board], evaluator);
   const inPosition = heroInPosition(state, heroSeat);
@@ -508,54 +676,114 @@ export function gradeDecision(
     })();
 
   let evLossBb = Math.max(0, best.evBb - chosen.evBb);
-  let severity: Severity = severityForEvLoss(evLossBb, thresholds);
+  // Postflop severity maps off a noise-discounted loss so Monte Carlo wobble in
+  // big pots can't manufacture phantom Blunders (spec §6 R6a). Preflop grading
+  // is deterministic (chart-driven) — no margin there. The DISPLAYED cost stays
+  // the raw evLossBb; only the severity tier uses the discounted value.
+  const noiseMargin = state.street === 'PREFLOP' ? 0 : noiseMarginBb(ctx.potBb, ctx.iterations);
+  let severity: Severity = severityForEvLoss(Math.max(0, evLossBb - noiseMargin), thresholds);
   let displayBest = best;
+  // Set when hero clearly deviated from the preflop chart (not merely one step
+  // off a boundary). Such deviations must never be downgraded back to OK by the
+  // generic mixed-strategy tolerance below, however small the crude EV loss.
+  let preflopChartDeviation = false;
 
   // Preflop chart grading overrides the EV numbers where the chart speaks
-  // (spec §3): a chart-matching action is OK; one step off a boundary is at
-  // most an Inaccuracy; otherwise EV loss is measured against the CHART's
-  // action (the one-street EV model is too crude preflop to outrank the
-  // solver-derived charts, so the coaching message must name the chart play).
+  // (spec §3): the recommended action is always the CHART's action (the
+  // one-street EV model is too crude preflop to outrank the solver-derived
+  // charts). A chart-matching action is OK; one step off a boundary is at
+  // most an Inaccuracy; otherwise EV loss is measured against the chart action.
   if (state.street === 'PREFLOP') {
     const verdict = preflopChartVerdict(state, heroSeat);
     if (verdict) {
+      const chartCandidate =
+        verdict.chartAction === 'raise'
+          ? candidates.find((c) => c.action === 'raise' || c.action === 'bet')
+          : candidates.find((c) => c.action === verdict.chartAction);
+      // The coach always recommends the chart line — even when hero already
+      // played it (so "best" reads as "your play was correct", and the Review
+      // screen never shows a spurious EV-model alternative).
+      if (chartCandidate) displayBest = chartCandidate;
+
       const chosenMatches =
         (verdict.chartAction === 'raise' && (chosenAction.type === 'raise' || chosenAction.type === 'bet')) ||
         (verdict.chartAction === 'call' && chosenAction.type === 'call') ||
         (verdict.chartAction === 'fold' &&
           (chosenAction.type === 'fold' || chosenAction.type === 'check'));
+
       if (chosenMatches) {
         evLossBb = 0;
         severity = 'OK';
-      } else {
-        const chartCandidate =
-          verdict.chartAction === 'raise'
-            ? candidates.find((c) => c.action === 'raise' || c.action === 'bet')
-            : candidates.find((c) => c.action === verdict.chartAction);
-        if (chartCandidate) {
-          displayBest = chartCandidate;
-          evLossBb = Math.max(0, chartCandidate.evBb - chosen.evBb);
-          severity = severityForEvLoss(evLossBb, thresholds);
-        }
-        if (verdict.nearBoundary && severity !== 'OK') {
-          evLossBb = Math.min(evLossBb, 0.3);
-          severity = 'INACCURACY';
-        } else if (severity === 'OK' && evLossBb === 0 && chartCandidate) {
-          // The EV model sees no loss but the chart disagrees with the line:
-          // still surface it as a light Inaccuracy so chart deviations are
-          // never silently endorsed.
-          evLossBb = 0.1;
-          severity = 'INACCURACY';
+      } else if (chartCandidate) {
+        evLossBb = Math.max(0, chartCandidate.evBb - chosen.evBb);
+        severity = severityForEvLoss(evLossBb, thresholds);
+        if (verdict.nearBoundary) {
+          // One step off the chart boundary is a tolerable deviation: cap it at
+          // a light Inaccuracy, and let genuinely near-breakeven ones stay OK.
+          if (severity !== 'OK') {
+            evLossBb = Math.min(evLossBb, 0.3);
+            severity = 'INACCURACY';
+          }
+        } else {
+          // A clear chart deviation: never silently endorse it. Even when the
+          // crude one-street EV model rates the loss as mixed-strategy noise
+          // (< 0.1bb), surface it as at least a light Inaccuracy.
+          preflopChartDeviation = true;
+          if (severity === 'OK') {
+            evLossBb = Math.max(evLossBb, 0.1);
+            severity = 'INACCURACY';
+          }
         }
       }
     }
   }
 
-  // Mixed-strategy rule (§6.4): candidates within 0.1bb of best are all OK.
-  if (evLossBb < 0.1) severity = 'OK';
+  // Mixed-strategy rule (§6.4): candidates within 0.1bb of best are all OK —
+  // except a clear preflop chart deviation, which was flagged deliberately above.
+  if (!preflopChartDeviation && evLossBb < 0.1) severity = 'OK';
 
-  const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition);
-  const requiredPct = Math.round((toCallBb / (ctx.potBb + toCallBb) || 0) * 100);
+  // Single-villain exploitable profile: only lean on a read when there is
+  // exactly one live opponent, so "this opponent" is unambiguous.
+  const villainType: VillainType =
+    villainSeats.length === 1
+      ? villainPersonalities[0] === 'Station'
+        ? 'STATION'
+        : villainPersonalities[0] === 'Nit'
+          ? 'NIT'
+          : villainPersonalities[0] === 'LAG'
+            ? 'LAG'
+            : null
+      : null;
+  // Two or more live opponents at this decision — drives multiway discipline
+  // wording and suppresses bluff coaching (bluffing multiway is a leak).
+  const multiway = villainSeats.length >= 2;
+  const texture = classifyBoardTexture(state.board);
+  // Outs only matter for semi-bluff wording; skip the 47-card scan otherwise.
+  const outs = heroBucket === 'DRAW' ? countCleanOuts(heroCards, [...state.board], evaluator) : 0;
+  const sizeDirection: 'bigger' | 'smaller' | null =
+    (displayBest.action === 'bet' || displayBest.action === 'raise') &&
+    chosen.action === displayBest.action &&
+    displayBest.amount !== undefined &&
+    chosen.amount !== undefined &&
+    displayBest.amount !== chosen.amount
+      ? displayBest.amount > chosen.amount
+        ? 'bigger'
+        : 'smaller'
+      : null;
+
+  const reasonKey = pickReason(state.street, displayBest, chosen, heroBucket, inPosition, villainType, multiway);
+  // Equity actually needed to make continuing break even, given how much of it
+  // hero will realize (R). All-in ⇒ R=1 ⇒ this is the raw pot-odds price; with
+  // more betting to come it's higher. Because the fold/call verdict uses this
+  // same R-discounted EV, keying the message off this number guarantees the
+  // "you needed X% · you have Y%" line never contradicts the recommendation.
+  const denom = r * (ctx.potBb + toCallBb);
+  const requiredPct = denom > 0 ? Math.min(99, Math.round((toCallBb / denom) * 100)) : 0;
+  // How contested the pot already was when hero acted (preflop messages only).
+  // Counts all prior preflop raises, mirroring preflopChartVerdict's branches.
+  const priorRaises = state.actionLog.filter(
+    (e) => e.street === 'PREFLOP' && (e.action === 'raise' || e.action === 'bet'),
+  ).length;
   const { message, glossary } = buildMessage(
     displayBest,
     evLossBb,
@@ -564,9 +792,20 @@ export function gradeDecision(
       requiredPct,
       equityPct: Math.round(equity * 100),
       position: positionForSeat(state.buttonSeat, heroSeat, state.seats.length),
+      facing: priorRaises === 0 ? 'open' : priorRaises === 1 ? 'raise' : 'reraise',
+      // Whether the CHART wants hero in the pot — this is what the rationale
+      // explains, independent of what hero actually did. `displayBest` is
+      // always the chart action preflop, so a limp/wrong-size open still gets
+      // the correct "strong enough to play" wording (not "too weak, fold it").
       chartSaysPlay:
-        (displayBest.action === 'raise' || displayBest.action === 'bet' || displayBest.action === 'call') &&
-        (chosenAction.type === 'fold' || chosenAction.type === 'check'),
+        displayBest.action === 'raise' || displayBest.action === 'bet' || displayBest.action === 'call',
+      // The coach recommends continuing (not folding) — drives the pot-odds
+      // wording so it always agrees with the verdict.
+      pricedIn: displayBest.action !== 'fold',
+      texture,
+      outs,
+      sizeDirection,
+      multiway,
     },
     bigBlind,
   );
@@ -585,6 +824,21 @@ export function gradeDecision(
     street: state.street,
     category: classifyDecision(state, heroSeat, displayBest, chosen, heroBucket),
   };
+}
+
+/**
+ * The action the preflop chart recommends here, or null when the chart is
+ * silent (e.g. a BB free check). Pure — no equity simulation — so callers can
+ * check the grader's chart decision across many hands without paying for Monte
+ * Carlo. This is the exact verdict gradeDecision uses to grade preflop spots,
+ * exposed so tests can assert bots and the grader share one range model.
+ */
+export function preflopChartAction(
+  state: GameState,
+  heroSeat: number,
+): 'raise' | 'call' | 'fold' | null {
+  if (state.street !== 'PREFLOP') return null;
+  return preflopChartVerdict(state, heroSeat)?.chartAction ?? null;
 }
 
 /** Whether this decision is gradable at all (hero can act, has a live opponent). */

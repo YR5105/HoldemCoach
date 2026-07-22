@@ -12,6 +12,12 @@ export interface CoachAnnotation {
   reasonKey: string;
   message: string;
   category: string;
+  /**
+   * Hero's hand-strength bucket at the decision (spec §6 R7). Additive: records
+   * written before this field lack it, so every consumer must skip annotations
+   * where `heroBucket` is undefined rather than assume a value.
+   */
+  heroBucket?: string;
 }
 
 export interface HandDoc {
@@ -26,6 +32,8 @@ export interface HandDoc {
     /** Needed (with seed) to reconstruct the hand for the replayer. */
     buttonSeat: number;
     startingStack: number;
+    /** Per-seat chips at the start of THIS hand (continuous-match reconstruction). */
+    startingStacks?: number[];
   };
   holeCards: Record<number, Card[]>;
   board: Card[];
@@ -101,6 +109,7 @@ export function toCoachAnnotation(grade: GradeResult): CoachAnnotation {
     reasonKey: grade.reasonKey,
     message: grade.message,
     category: grade.category,
+    heroBucket: grade.heroBucket,
   };
 }
 
@@ -113,6 +122,7 @@ export function buildHandDoc(
   heroSeat: number,
   gradesByActionIndex: Map<number, CoachAnnotation>,
   personalities: Record<number, string> = {},
+  startingStacks?: number[],
 ): HandDoc {
   const showdown = (state.payout?.showdownHands ?? undefined) !== undefined;
   return {
@@ -128,6 +138,7 @@ export function buildHandDoc(
         .map((s) => personalities[s.seatIndex] ?? 'TAG'),
       buttonSeat: state.buttonSeat,
       startingStack: state.config.startingStack,
+      startingStacks,
     },
     holeCards: Object.fromEntries(
       state.seats.filter((s) => s.holeCards).map((s) => [s.seatIndex, s.holeCards!]),

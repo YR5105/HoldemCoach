@@ -23,11 +23,35 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   BLUNDER: 'Blunder',
 };
 
+/**
+ * Reinforce *what* was good on an OK grade, keyed off the hero's hand and the
+ * action they chose — a well-played value bet or semi-bluff deserves more than
+ * the generic "you didn't give up anything" line.
+ */
+function okCopy(grade: GradeResult): string {
+  const { heroBucket, chosen } = grade;
+  const aggressive = chosen.action === 'bet' || chosen.action === 'raise';
+  if (aggressive && (heroBucket === 'MONSTER' || heroBucket === 'STRONG')) {
+    return 'Good decision — betting strong hands builds the pot while you are ahead.';
+  }
+  if (aggressive && heroBucket === 'DRAW') {
+    return 'Good decision — betting a draw gives you two ways to win.';
+  }
+  if (chosen.action === 'fold') {
+    return 'Good decision — saving chips is winning too.';
+  }
+  return "Good decision — you didn't give up anything here.";
+}
+
 export function FeedbackCard({ grade, onClose }: { grade: GradeResult; onClose?: () => void }) {
   const color = SEVERITY_COLOR[grade.severity];
 
   return (
-    <div className="w-80 rounded-xl border border-slate-700 bg-slate-900 p-4 text-left shadow-2xl">
+    <div
+      data-testid="feedback-card"
+      className="animate-pop-in w-80 rounded-xl border-t-4 border border-slate-700 bg-slate-900 p-4 text-left shadow-2xl"
+      style={{ borderTopColor: color }}
+    >
       <div className="mb-2 flex items-center justify-between">
         <span
           className="rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-slate-900"
@@ -49,14 +73,18 @@ export function FeedbackCard({ grade, onClose }: { grade: GradeResult; onClose?:
       </div>
 
       {grade.severity === 'OK' ? (
-        <p className="text-sm text-slate-200">Good decision — you didn't give up anything here.</p>
+        <p className="text-sm text-slate-200">{okCopy(grade)}</p>
       ) : (
         <p className="text-sm text-slate-200">{grade.message}</p>
       )}
 
       <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-2 text-xs text-slate-400">
         <span>
-          wins ~{Math.round(grade.equity * 100)}% of the time · {BUCKET_LABEL[grade.heroBucket]}
+          wins ~{Math.round(grade.equity * 100)}% of the time
+          {/* The hand-strength bucket describes a MADE hand, so it only makes
+              sense once there's a board — a preflop "weak hand" for 99 is
+              misleading. */}
+          {grade.street !== 'PREFLOP' && ` · ${BUCKET_LABEL[grade.heroBucket]}`}
         </span>
         <span className="underline decoration-dotted" title="Glossary term (full glossary coming with onboarding)">
           {grade.glossary}

@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { GRADING_THRESHOLDS, type GradingThresholds } from '../coach/graderTypes';
 import type { Personality } from '../coach/personalities';
 
-export type FeedbackMode = 'instant' | 'subtle' | 'review';
+export type FeedbackMode = 'instant' | 'subtle' | 'review' | 'meter';
 export type ExperienceLevel = 'beginner' | 'casual' | 'studied';
 
 export type { GradingThresholds };
@@ -55,9 +55,10 @@ export const useSettingsStore = create<SettingsStore>()(
           onboardingComplete: true,
           experienceLevel: level,
           beginnerHints: level === 'beginner',
-          // First hand plays in instant mode per spec §9 onboarding; the user
-          // can switch to the subtle default any time.
-          feedbackMode: 'instant',
+          // Beginners start in instant mode (a card after every graded decision);
+          // more experienced players default to the ambient meter (spec §6 R5),
+          // and anyone can switch modes in Settings.
+          feedbackMode: level === 'beginner' ? 'instant' : 'meter',
         }),
     }),
     { name: 'holdemcoach-settings' },

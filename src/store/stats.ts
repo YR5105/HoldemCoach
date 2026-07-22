@@ -22,6 +22,29 @@ export interface WindowPoint {
   evLossPer100: number;
 }
 
+/**
+ * Behavioral pattern metrics (spec §6 R7). All derived only from annotations
+ * that carry `heroBucket`; older records without it are skipped.
+ */
+export interface PatternStats {
+  /** Facing a bet while on a flush/straight draw. */
+  chaseSpots: number;
+  /** …of those, how many were non-OK (paid a bad price). */
+  chaseLeaks: number;
+  /** chaseLeaks / chaseSpots (0 when no spots). */
+  chaseRate: number;
+  /** Decisions holding a strong made hand (MONSTER/STRONG). */
+  madeSpots: number;
+  /** …fraction where hero bet or raised. */
+  aggMadeRate: number;
+  /** Decisions holding a draw. */
+  drawSpots: number;
+  /** …fraction where hero bet or raised. */
+  aggDrawRate: number;
+  /** aggMadeRate − aggDrawRate: how differently hero plays made hands vs draws. */
+  readabilityGap: number;
+}
+
 export interface Stats {
   handsPlayed: number;
   decisions: number;
@@ -33,6 +56,7 @@ export interface Stats {
   guessCount: number;
   /** Mean absolute guess error in equity points (0-100 scale). */
   guessMeanErrorPct: number | null;
+  patterns: PatternStats;
 }
 
 const WINDOW_SIZE = 250;
@@ -42,6 +66,10 @@ interface GradedAction {
   severity: string;
   evLoss: number;
   message: string;
+  /** Hero's actual action type (for readability/aggression). */
+  action: string;
+  /** Hand-strength bucket, or undefined on pre-R7 records (must be skipped). */
+  heroBucket?: string;
 }
 
 function gradedActions(doc: HandDoc): GradedAction[] {
@@ -52,7 +80,37 @@ function gradedActions(doc: HandDoc): GradedAction[] {
       severity: a.coach!.severity,
       evLoss: a.coach!.evLoss,
       message: a.coach!.message,
+      action: a.action,
+      heroBucket: a.coach!.heroBucket,
     }));
+}
+
+/**
+ * Draw-chasing and readability patterns (spec §6 R7). Only annotations that
+ * carry `heroBucket` contribute — pre-R7 records are silently skipped.
+ */
+function computePatterns(actions: GradedAction[]): PatternStats {
+  const isAggressive = (a: GradedAction) => a.action === 'bet' || a.action === 'raise';
+
+  const chase = actions.filter((a) => a.heroBucket === 'DRAW' && a.category === 'facing_bet');
+  const chaseSpots = chase.length;
+  const chaseLeaks = chase.filter((a) => a.severity !== 'OK').length;
+
+  const made = actions.filter((a) => a.heroBucket === 'MONSTER' || a.heroBucket === 'STRONG');
+  const draws = actions.filter((a) => a.heroBucket === 'DRAW');
+  const aggMadeRate = made.length > 0 ? made.filter(isAggressive).length / made.length : 0;
+  const aggDrawRate = draws.length > 0 ? draws.filter(isAggressive).length / draws.length : 0;
+
+  return {
+    chaseSpots,
+    chaseLeaks,
+    chaseRate: chaseSpots > 0 ? chaseLeaks / chaseSpots : 0,
+    madeSpots: made.length,
+    aggMadeRate,
+    drawSpots: draws.length,
+    aggDrawRate,
+    readabilityGap: aggMadeRate - aggDrawRate,
+  };
 }
 
 /** Aggregates dashboard stats from hand history docs (oldest-first order expected). */
@@ -64,10 +122,13 @@ export function computeStats(docs: HandDoc[], guesses: GuessDoc[]): Stats {
   let decisions = 0;
   let totalEvLoss = 0;
   const perHandLoss: number[] = [];
+  const allActions: GradedAction[] = [];
 
   for (const doc of docs) {
     let handLoss = 0;
-    for (const action of gradedActions(doc)) {
+    const acts = gradedActions(doc);
+    allActions.push(...acts);
+    for (const action of acts) {
       decisions++;
       totalEvLoss += action.evLoss;
       handLoss += action.evLoss;
@@ -120,5 +181,6 @@ export function computeStats(docs: HandDoc[], guesses: GuessDoc[]): Stats {
     windows,
     guessCount: guesses.length,
     guessMeanErrorPct,
+    patterns: computePatterns(allActions),
   };
 }

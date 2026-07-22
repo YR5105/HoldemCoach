@@ -14,7 +14,7 @@ export function SettingsScreen() {
     <div className="mx-auto flex w-full max-w-xl flex-col gap-4 p-4">
       <Section title="Coach feedback">
         <div className="flex gap-2">
-          {(['instant', 'subtle', 'review'] as FeedbackMode[]).map((mode) => (
+          {(['instant', 'subtle', 'review', 'meter'] as FeedbackMode[]).map((mode) => (
             <button
               key={mode}
               type="button"
@@ -31,7 +31,7 @@ export function SettingsScreen() {
         </div>
         <p className="mt-1 text-xs text-slate-500">
           Instant pops a card after each graded decision · Subtle shows a small dot · Review waits
-          until the hand ends.
+          until the hand ends · Meter shows an ambient performance bar; tap it for the details.
         </p>
       </Section>
 

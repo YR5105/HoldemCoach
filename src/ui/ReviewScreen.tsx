@@ -118,6 +118,7 @@ function Replayer({ doc, onBack }: { doc: HandDoc; onBack: () => void }) {
           action: a.action as ActionType,
           amount: a.amount,
         })),
+        doc.config.startingStacks,
       );
     } catch (err) {
       console.error('replay failed:', err);

@@ -1,5 +1,6 @@
 import type { EquitySnapshot } from '../equity/equityClient';
 import type { PotOdds } from '../store/gameStore';
+import { AnimatedNumber } from './AnimatedNumber';
 
 /** Spec §9 color states: green ≥ needed+10pts, yellow within ±10, red below. */
 function dialColor(equityPct: number, requiredPct: number): string {
@@ -34,16 +35,33 @@ export function WinDial({ equity, potOdds }: { equity: EquitySnapshot | null; po
             className="transition-all duration-300"
           />
         </svg>
-        <div className="absolute inset-0 flex items-center justify-center text-sm font-bold" style={{ color }}>
-          {equityPct !== null ? `${Math.round(equityPct)}%` : '…'}
+        <div
+          data-testid="win-percent"
+          className="absolute inset-0 flex items-center justify-center text-sm font-bold tabular-nums transition-colors duration-300"
+          style={{ color }}
+        >
+          {equityPct !== null ? (
+            <>
+              <AnimatedNumber value={equityPct} />%
+            </>
+          ) : (
+            '…'
+          )}
         </div>
       </div>
 
       <div className="text-xs leading-5 text-slate-300">
         <div className="font-medium text-slate-100">Win probability</div>
         {potOdds.toCall > 0 ? (
-          <div>
-            need {Math.round(requiredPct)}% · have {equityPct !== null ? `${Math.round(equityPct)}%` : '…'}
+          <div className="tabular-nums">
+            need {Math.round(requiredPct)}% · have{' '}
+            {equityPct !== null ? (
+              <>
+                <AnimatedNumber value={equityPct} />%
+              </>
+            ) : (
+              '…'
+            )}
           </div>
         ) : (
           <div>no bet to call</div>

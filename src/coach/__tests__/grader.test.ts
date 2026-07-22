@@ -170,6 +170,34 @@ describe('preflop chart grading (spec §3 tolerance)', () => {
     expect(grade.reasonKey).toBe('preflop_chart');
   });
 
+  it('folding an in-range hand (AQo UTG) recommends raising and never contradicts itself', () => {
+    // Regression: the message once paired "raising was better" with "too weak,
+    // fold it here". A raise recommendation and a fold rationale must never
+    // appear in the same message.
+    const s = utgState('pf-aqo', ['Ad', 'Qc']);
+    const grade = gradeDecision(s, 3, { seat: 3, type: 'fold' }, evaluator);
+    expect(grade.best.action).toBe('raise');
+    expect(grade.message.toLowerCase()).toContain('strong enough to raise');
+    expect(grade.message.toLowerCase()).not.toContain('too weak');
+    expect(grade.message.toLowerCase()).not.toContain('fold it here');
+  });
+
+  it('preflop messages never mix a raise/call recommendation with a fold rationale', () => {
+    // Sweep a spread of first-in hands from UTG; whatever the verdict, the
+    // "better play" verb and the rationale must agree in direction.
+    const hands: [string, string][] = [
+      ['Ad', 'Qc'], ['As', 'Ah'], ['Kd', 'Qs'], ['7h', '2d'],
+      ['Ah', '8h'], ['9c', '9d'], ['Jd', 'Ts'], ['5c', '4c'],
+    ];
+    for (const cards of hands) {
+      const s = utgState(`sweep-${cards.join('')}`, cards as [Card, Card]);
+      const msg = gradeDecision(s, 3, { seat: 3, type: 'fold' }, evaluator).message.toLowerCase();
+      const recommendsEntering = msg.includes('raising') || msg.includes('calling');
+      const rationaleIsFold = msg.includes('too weak') || msg.includes('fold it here');
+      expect(recommendsEntering && rationaleIsFold, `contradiction for ${cards.join('')}: ${msg}`).toBe(false);
+    }
+  });
+
   it('folding a non-premium hand to a 3-bet grades OK (chart: fold)', () => {
     // Hero opens KJo on the BTN, BB 3-bets; KJo is far outside the QQ+/AK
     // continue range, so folding must never be flagged — regardless of what

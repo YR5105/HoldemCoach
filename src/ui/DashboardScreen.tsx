@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { DecisionCategory } from '../coach/graderTypes';
 import { listGuesses, listHands, type GuessDoc, type HandDoc } from '../store/handHistory';
 import { computeStats, type Stats } from '../store/stats';
+import { AnimatedNumber } from './AnimatedNumber';
 
 // Dark-mode series hue from the validated reference palette (single series /
 // single measure -> one hue; severity colors stay reserved for severity chips).
@@ -14,6 +16,31 @@ const CATEGORY_LABEL: Record<string, string> = {
   facing_bet: 'Facing bets',
   bluff: 'Bluffing',
   sizing: 'Sizing',
+};
+
+/**
+ * "Are you readable?" card copy (spec §6 R7). Percentages are pre-rounded whole
+ * numbers. Kept jargon-free (draw/flush/straight are fine; never "range").
+ * Exported so a jargon test can audit the strings without rendering.
+ */
+export const READABILITY_COPY = {
+  chasing: (chaseRatePct: number) =>
+    `When you hold a flush or straight draw and face a bet, you pay too much to keep chasing about ${chaseRatePct}% of the time. Check the price against your chance of hitting before you call.`,
+  readability: (aggMadePct: number, aggDrawPct: number) =>
+    `Your raises almost always mean a strong made hand — you raise ${aggMadePct}% of the time with strong hands but only ${aggDrawPct}% with your draws. Observant opponents can read that. Raising some of your strong draws keeps them guessing.`,
+};
+
+/** One actionable, plain-English study tip per leak category (R3). */
+export const LEAK_TIPS: Record<DecisionCategory, string> = {
+  preflop:
+    'Stick to the starting-hand chart for your seat — discipline before the flop is the fastest way to stop losses.',
+  cbet:
+    'As the last raiser you can often keep betting: small on boards that miss everyone, bigger when many draws are possible.',
+  facing_bet:
+    'Compare the price against how often your hand wins — and fold when you are not getting it.',
+  sizing:
+    'Size bets by the board: small bets work on dry boards, big bets on coordinated ones.',
+  bluff: 'Bluff with hands that can still improve, and never bluff players who refuse to fold.',
 };
 
 export function DashboardScreen() {
@@ -45,15 +72,27 @@ export function DashboardScreen() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
       <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Hands played" value={String(stats.handsPlayed)} />
+        <StatTile label="Hands played" value={<AnimatedNumber value={stats.handsPlayed} animateOnMount />} />
         <StatTile
           label="EV loss / 100 hands"
-          value={`${stats.evLossPer100.toFixed(1)}bb`}
+          value={
+            <>
+              <AnimatedNumber value={stats.evLossPer100} decimals={1} animateOnMount />bb
+            </>
+          }
           hint="lower is better"
         />
         <StatTile
           label="Guess-first accuracy"
-          value={stats.guessMeanErrorPct !== null ? `±${stats.guessMeanErrorPct.toFixed(0)}%` : '—'}
+          value={
+            stats.guessMeanErrorPct !== null ? (
+              <>
+                ±<AnimatedNumber value={stats.guessMeanErrorPct} animateOnMount />%
+              </>
+            ) : (
+              '—'
+            )
+          }
           hint={stats.guessCount > 0 ? `${stats.guessCount} guesses` : 'no guesses yet'}
         />
       </div>
@@ -73,7 +112,10 @@ export function DashboardScreen() {
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-200">EV lost by category</h2>
         <CategoryBars stats={stats} />
+        <WorstCategoryTip stats={stats} />
       </section>
+
+      <ReadabilityCard stats={stats} />
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-200">Top leaks</h2>
@@ -101,10 +143,10 @@ export function DashboardScreen() {
   );
 }
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatTile({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-center">
-      <div className="text-xl font-bold text-slate-100">{value}</div>
+      <div className="text-xl font-bold tabular-nums text-slate-100">{value}</div>
       <div className="mt-0.5 text-xs text-slate-400">{label}</div>
       {hint && <div className="text-[10px] text-slate-600">{hint}</div>}
     </div>
@@ -173,6 +215,52 @@ function TrendChart({ windows }: { windows: Stats['windows'] }) {
         </g>
       )}
     </svg>
+  );
+}
+
+/** Actionable study tip for the single worst leak category (highest EV lost). */
+/**
+ * Behavioral pattern feedback (spec §6 R7). Renders only patterns that clear
+ * their minimum-sample bar; if neither does, the whole card is omitted (never
+ * a "not enough data" placeholder).
+ */
+function ReadabilityCard({ stats }: { stats: Stats }) {
+  const p = stats.patterns;
+  const pct = (x: number) => Math.round(x * 100);
+  const showChasing = p.chaseSpots >= 10 && p.chaseRate >= 0.5;
+  const showReadability = p.madeSpots >= 10 && p.drawSpots >= 10 && p.readabilityGap >= 0.4;
+  if (!showChasing && !showReadability) return null;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <h2 className="mb-3 text-sm font-semibold text-slate-200">Are you readable?</h2>
+      <div className="flex flex-col gap-3 text-xs text-slate-300">
+        {showChasing && <p data-testid="chasing-line">{READABILITY_COPY.chasing(pct(p.chaseRate))}</p>}
+        {showReadability && (
+          <p data-testid="readability-line">
+            {READABILITY_COPY.readability(pct(p.aggMadeRate), pct(p.aggDrawRate))}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WorstCategoryTip({ stats }: { stats: Stats }) {
+  const worst = [...stats.categories]
+    .filter((c) => c.evLoss > 0)
+    .sort((a, b) => b.evLoss - a.evLoss)[0];
+  if (!worst) return null;
+  return (
+    <p
+      data-testid="leak-tip"
+      className="mt-3 border-t border-slate-800 pt-3 text-xs text-slate-400"
+    >
+      <span className="font-semibold text-slate-300">
+        Work on {CATEGORY_LABEL[worst.category] ?? worst.category}:{' '}
+      </span>
+      {LEAK_TIPS[worst.category]}
+    </p>
   );
 }
 

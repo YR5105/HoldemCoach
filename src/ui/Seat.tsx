@@ -1,5 +1,6 @@
 import type { Personality } from '../coach/personalities';
 import type { Seat as EngineSeat } from '../engine/types';
+import { AnimatedNumber } from './AnimatedNumber';
 import { PlayingCard } from './Card';
 
 /** Per-personality icon + accent for the seat badge (spec §9 "personality icon"). */
@@ -24,19 +25,26 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
   const showFaceUp = isHero && seat.holeCards;
   const badge = !isHero && personality ? PERSONALITY_BADGE[personality] : null;
 
+  const eliminated = seat.sittingOut;
+
   return (
     <div
-      className={`flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-shadow ${
-        isActive ? 'ring-2 ring-amber-400 shadow-lg shadow-amber-400/30' : ''
-      } ${seat.folded ? 'opacity-40' : ''}`}
+      className={`flex flex-col items-center gap-0.5 rounded-xl px-1.5 py-1 transition-all duration-300 sm:gap-1 sm:px-3 sm:py-2 ${
+        isActive ? 'animate-active-pulse ring-2 ring-amber-400' : ''
+      } ${eliminated ? 'opacity-30' : seat.folded ? 'opacity-40' : ''}`}
     >
       <div className="flex gap-1">
         {seat.holeCards ? (
           seat.holeCards.map((c, i) => (
-            <PlayingCard key={i} card={showFaceUp ? c : undefined} faceDown={!showFaceUp} small />
+            <PlayingCard
+              key={i}
+              card={showFaceUp ? c : undefined}
+              faceDown={!showFaceUp}
+              size={isHero ? 'lg' : 'sm'}
+            />
           ))
         ) : (
-          <div className="h-11 w-8" />
+          <div className="h-10 w-7 sm:h-11 sm:w-8" />
         )}
       </div>
 
@@ -50,8 +58,8 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
             You
           </span>
         )}
-        <span className="font-medium">{position}</span>
-        {isButton && (
+        <span className="font-medium">{eliminated ? '—' : position}</span>
+        {isButton && !eliminated && (
           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-slate-900">
             D
           </span>
@@ -59,14 +67,20 @@ export function SeatView({ seat, isHero, isButton, isActive, position, personali
       </div>
 
       <div className="text-xs text-slate-200">
-        <span className="font-semibold">{seat.stack}</span>
-        {seat.allIn && <span className="ml-1 text-amber-400">ALL-IN</span>}
-        {seat.folded && <span className="ml-1 text-slate-400">FOLDED</span>}
+        {eliminated ? (
+          <span className="font-semibold text-rose-400">OUT</span>
+        ) : (
+          <>
+            <AnimatedNumber value={seat.stack} className="font-semibold tabular-nums" />
+            {seat.allIn && <span className="ml-1 text-amber-400">ALL-IN</span>}
+            {seat.folded && <span className="ml-1 text-slate-400">FOLDED</span>}
+          </>
+        )}
       </div>
 
       {seat.committedThisStreet > 0 && (
         <div className="rounded-full bg-slate-900/80 px-2 py-0.5 text-[11px] text-amber-300">
-          {seat.committedThisStreet}
+          <AnimatedNumber value={seat.committedThisStreet} className="tabular-nums" />
         </div>
       )}
     </div>

@@ -12,16 +12,19 @@ export interface ReplayStep {
 
 /**
  * Rebuilds every intermediate state of a hand from {seed, config, actionLog}
- * (the determinism invariant makes this exact). Blind posts are part of
- * startHand and don't get their own steps.
+ * (the determinism invariant makes this exact). `seatStacks` supplies the
+ * per-seat chips the hand started with — required to reproduce continuous-match
+ * hands where stacks carried over and some seats were eliminated. Blind posts
+ * are part of startHand and don't get their own steps.
  */
 export function buildReplay(
   config: GameConfig,
   seed: string,
   buttonSeat: number,
   actionLog: ActionLogEntry[],
+  seatStacks?: number[],
 ): ReplayStep[] {
-  let state = startHand(createInitialState(config, seed, buttonSeat));
+  let state = startHand(createInitialState(config, seed, buttonSeat, seatStacks));
   const steps: ReplayStep[] = [{ state, entry: null, actionIndex: -1 }];
 
   for (let i = 0; i < actionLog.length; i++) {
