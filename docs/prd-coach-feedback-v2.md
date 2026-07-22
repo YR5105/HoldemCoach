@@ -80,6 +80,11 @@ Implemented, tested (232/232 passing, `tsc --noEmit` clean), and documented in
 
 ## 6. Phase 2 — Requirements (this PRD's scope)
 
+> **Status:** R1–R4 implemented in `8e7222a`, R5 in `a06457b` — all verified.
+> **R6 and R7 are the open requirements.** They respond to real user feedback:
+> a huge won pot graded harshly (partly justified, partly simulation noise) and
+> a request to detect behavioral patterns across hands.
+
 ### R1 — LAG exploit reason (`exploit_lag`)
 
 **User story:** When a lone loose-aggressive opponent bets and I fold a decent
@@ -175,6 +180,65 @@ explanation available only when I tap.
 - Component test: mode picker in Settings shows the meter option and persists it.
 - Existing instant/subtle/review behavior unchanged (current `coachModes` tests still green).
 
+### R6 — Big-pot grading robustness + meter fairness
+
+**Problem (observed in production):** hero won a ~200bb pot but the meter
+tanked. Two causes. (a) Legitimate: the coach grades decisions, not results —
+some penalties were correct. (b) Defect: equity comes from Monte Carlo with
+`MC_ITERATIONS = 1000` (`grader.ts` top), so each equity estimate carries
+~±1.6% noise. EV terms multiply equity by pot-scale amounts, so in a 200bb pot
+a single EV estimate carries ~±3bb of pure noise — and `evLossBb` compares two
+independently-seeded estimates (`equityVs` uses a per-candidate seed suffix),
+so the noise on the *difference* is larger still. The Blunder threshold is
+2bb: in big pots the coach can manufacture phantom Blunders from noise, each
+costing up to −20 on the meter.
+
+**Spec — 6a, noise-aware severity (grader):**
+- Make iterations pot-adaptive in `gradeDecision`: `iterations = min(4000, max(1000, round(potBb * 20)))`; thread it through `equityVs`/`simulateEquity` instead of the flat constant.
+- Add `noiseMarginBb(potBb, iterations)` in `grader.ts` ≈ `k / sqrt(iterations) * potBb` — this is z·σ of the *difference* of two independent equity estimates scaled by pot (σ_equity = 0.5/√N; difference multiplies by √2). Start with k = 1.0 (≈1.4σ) and calibrate.
+- Severity postflop uses `adjustedLoss = max(0, evLossBb − noiseMarginBb)` for tier mapping only; the displayed cost stays `evLossBb`. Preflop chart grading is deterministic — do NOT apply the margin there (keep the existing chart-deviation rules untouched).
+- **Calibration constraint:** all existing fixture tests must pass unchanged (`grader.test.ts` river fixtures expect BLUNDER at ~5bb loss in a 15bb pot and MISTAKE/BLUNDER in the 20bb value fixture). If k = 1.0 breaks them, reduce k — the margin is meant to bite in 100bb+ pots, not 20bb ones. State the final k in a code comment with the math.
+
+**Spec — 6b, meter fairness (store + UI):**
+- Difficulty-weighted gains in `meterAfter` (`gameStore.ts`): pass the sorted `candidates` (already in `GradeResult`); let `gap = candidates[0].evBb − candidates[1].evBb` (0 if <2 candidates). OK reward: +2 when gap < 1, +4 when 1 ≤ gap < 3, +6 when gap ≥ 3 — a correct choice in a hard spot earns visibly more.
+- Delta indicator: in the meter UI (`FeedbackLayer.tsx`), on each meter change render a small floating "+4"/"−12" label that fades out (~1s, CSS animation; pattern: existing `animate-pop-in`). No text otherwise.
+- "Won, but…" nudge: at hand end (`state.street === 'PAYOUT'`) in meter mode only, when hero is in `payout.winners` AND any grade this hand was `MISTAKE`/`BLUNDER`, render one dismissible line near the bar: "Nice pot — one decision along the way could have cost you. Tap the bar to see." It must never auto-open the FeedbackCard, and must not appear in other modes.
+
+**Acceptance criteria:**
+- Unit test: with pot 200bb and two candidate EVs differing by less than the noise margin, severity is OK/INACCURACY — never BLUNDER.
+- Unit test: `noiseMarginBb` grows with pot and shrinks with iterations; pot 15bb margin < 1bb (so small-pot grading is untouched).
+- Existing `grader.test.ts`, `graderAccuracy.test.ts`, `graderSanity.test.ts` pass unchanged.
+- Store test: OK grade with gap ≥ 3 moves meter +6; gap < 1 moves +2.
+- Component test: winning hand containing a Blunder in meter mode shows the nudge; losing hand or mode ≠ meter shows nothing.
+
+### R7 — Behavioral pattern detection: draw chasing + readability
+
+**User insight:** most players respond to raises the same way when drawing —
+passive calls at bad prices — which is both an EV leak and a *tell*: if raises
+always mean a made hand and calls always mean a draw, observant opponents read
+the player like a book. Detect both patterns across hands and teach the pro
+fix (raise some strong draws to stay unreadable).
+
+**Spec — data (additive, backward-compatible):**
+- Add `heroBucket: string` to `CoachAnnotation` (`handHistory.ts`) and populate it in `toCoachAnnotation` from `grade.heroBucket`. Old IndexedDB docs lack the field — every consumer must skip records without it. No DB migration needed (documents are schemaless).
+
+**Spec — stats (`src/store/stats.ts`, extend `computeStats`):**
+- Chasing: over hero decisions where `coach.heroBucket === 'DRAW'` and `coach.category === 'facing_bet'`: `chaseSpots` = count, `chaseLeaks` = count with `severity !== 'OK'`, `chaseRate = chaseLeaks / chaseSpots`.
+- Readability: over hero decisions with a coach annotation, aggression = action is `bet`/`raise`. `aggMadeRate` among `heroBucket ∈ {MONSTER, STRONG}` (n = `madeSpots`), `aggDrawRate` among `heroBucket === 'DRAW'` (n = `drawSpots`). `readabilityGap = aggMadeRate − aggDrawRate`.
+- Expose all six numbers on the `Stats` type.
+
+**Spec — dashboard ("Are you readable?" card, `DashboardScreen.tsx`):**
+- Render the card only when at least one pattern clears its bar (below); otherwise omit entirely — never show "not enough data".
+- Chasing line (requires `chaseSpots ≥ 10` and `chaseRate ≥ 0.5`): "When you hold a flush or straight draw and face a bet, you pay too much to keep chasing about {chaseRate}% of the time. Check the price against your chance of hitting before you call."
+- Readability line (requires `madeSpots ≥ 10`, `drawSpots ≥ 10`, `readabilityGap ≥ 0.4`): "Your raises almost always mean a strong made hand — you raise {aggMadeRate}% of the time with strong hands but only {aggDrawRate}% with your draws. Observant opponents can read that. Raising some of your strong draws keeps them guessing."
+- Both strings must pass the jargon regex list from `plainEnglish.test.ts` (note: "draw", "flush", "straight" are allowed; "range" is not).
+
+**Acceptance criteria:**
+- Stats unit test with synthetic `HandDoc`s: chase and readability numbers computed correctly; docs without `heroBucket` are skipped without error.
+- Component test: card renders the chasing line at `chaseSpots = 12, chaseRate = 0.6`; renders nothing at `chaseSpots = 5` however bad the rate.
+- Jargon test over both card strings.
+- Existing `stats.test.ts` and `dashboardTips.test.tsx` pass unchanged.
+
 ## 7. Phase 3 — Deferred (do not implement now; listed for roadmap)
 
 EV-model accuracy track, in priority order: texture-adjusted realization
@@ -182,6 +246,11 @@ factor; MDF-informed fold equity; extra bet-size candidates (50% pot; river
 overbet only when hero is polarized); pot-normalized severity thresholds.
 Each changes grading numbers and needs its own calibration pass against
 `graderAccuracy.test.ts` — out of scope here.
+
+Stretch (after R7): **exploit bots** — when R7 detects a readable pattern,
+a bot personality that punishes it (stops paying off when the user's line
+screams a completed draw). Touches `botPolicy.ts` and the one-range-model
+invariant, so it needs its own design pass.
 
 ## 8. Verification checklist (applies to every requirement)
 
