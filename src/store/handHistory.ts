@@ -12,6 +12,12 @@ export interface CoachAnnotation {
   reasonKey: string;
   message: string;
   category: string;
+  /**
+   * Hero's hand-strength bucket at the decision (spec §6 R7). Additive: records
+   * written before this field lack it, so every consumer must skip annotations
+   * where `heroBucket` is undefined rather than assume a value.
+   */
+  heroBucket?: string;
 }
 
 export interface HandDoc {
@@ -103,6 +109,7 @@ export function toCoachAnnotation(grade: GradeResult): CoachAnnotation {
     reasonKey: grade.reasonKey,
     message: grade.message,
     category: grade.category,
+    heroBucket: grade.heroBucket,
   };
 }
 

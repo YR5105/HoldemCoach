@@ -18,6 +18,18 @@ const CATEGORY_LABEL: Record<string, string> = {
   sizing: 'Sizing',
 };
 
+/**
+ * "Are you readable?" card copy (spec §6 R7). Percentages are pre-rounded whole
+ * numbers. Kept jargon-free (draw/flush/straight are fine; never "range").
+ * Exported so a jargon test can audit the strings without rendering.
+ */
+export const READABILITY_COPY = {
+  chasing: (chaseRatePct: number) =>
+    `When you hold a flush or straight draw and face a bet, you pay too much to keep chasing about ${chaseRatePct}% of the time. Check the price against your chance of hitting before you call.`,
+  readability: (aggMadePct: number, aggDrawPct: number) =>
+    `Your raises almost always mean a strong made hand — you raise ${aggMadePct}% of the time with strong hands but only ${aggDrawPct}% with your draws. Observant opponents can read that. Raising some of your strong draws keeps them guessing.`,
+};
+
 /** One actionable, plain-English study tip per leak category (R3). */
 export const LEAK_TIPS: Record<DecisionCategory, string> = {
   preflop:
@@ -102,6 +114,8 @@ export function DashboardScreen() {
         <CategoryBars stats={stats} />
         <WorstCategoryTip stats={stats} />
       </section>
+
+      <ReadabilityCard stats={stats} />
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-200">Top leaks</h2>
@@ -205,6 +219,33 @@ function TrendChart({ windows }: { windows: Stats['windows'] }) {
 }
 
 /** Actionable study tip for the single worst leak category (highest EV lost). */
+/**
+ * Behavioral pattern feedback (spec §6 R7). Renders only patterns that clear
+ * their minimum-sample bar; if neither does, the whole card is omitted (never
+ * a "not enough data" placeholder).
+ */
+function ReadabilityCard({ stats }: { stats: Stats }) {
+  const p = stats.patterns;
+  const pct = (x: number) => Math.round(x * 100);
+  const showChasing = p.chaseSpots >= 10 && p.chaseRate >= 0.5;
+  const showReadability = p.madeSpots >= 10 && p.drawSpots >= 10 && p.readabilityGap >= 0.4;
+  if (!showChasing && !showReadability) return null;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <h2 className="mb-3 text-sm font-semibold text-slate-200">Are you readable?</h2>
+      <div className="flex flex-col gap-3 text-xs text-slate-300">
+        {showChasing && <p data-testid="chasing-line">{READABILITY_COPY.chasing(pct(p.chaseRate))}</p>}
+        {showReadability && (
+          <p data-testid="readability-line">
+            {READABILITY_COPY.readability(pct(p.aggMadeRate), pct(p.aggDrawRate))}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function WorstCategoryTip({ stats }: { stats: Stats }) {
   const worst = [...stats.categories]
     .filter((c) => c.evLoss > 0)
